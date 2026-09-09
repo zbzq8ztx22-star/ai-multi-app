@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
-import { Loader2, Send, Plus, Trash2, RefreshCw, Bot, User, Briefcase, Calendar, Receipt, DollarSign, FileText } from 'lucide-react'
+import { Loader2, Send, Plus, Trash2, RefreshCw, Bot, User, Briefcase, Calendar, Receipt, DollarSign, FileText, Eye } from 'lucide-react'
 import { apiGet, apiPost, apiDelete } from '../api'
+import PayslipDetail from './PayslipDetail'
 
 const SECTIONS = [
   { id: 'employees', label: 'Employees', icon: Briefcase },
@@ -91,6 +92,8 @@ export default function Payroll() {
   const [reportPeriodId, setReportPeriodId] = useState('')
   const [report, setReport] = useState(null)
   const [reportLoading, setReportLoading] = useState(false)
+
+  const [selectedPayslip, setSelectedPayslip] = useState(null)
 
   const messagesEndRef = useRef(null)
 
@@ -706,14 +709,24 @@ export default function Payroll() {
                     <td className="py-2">{formatCurrency(slip.federal_tax + slip.state_tax + slip.fica_tax + slip.medicare_tax)}</td>
                     <td className="py-2 font-semibold">{formatCurrency(slip.net_pay)}</td>
                     <td className="py-2 text-right">
-                      <button
-                        onClick={() => handleDeletePayslip(slip.id)}
-                        className="text-red-400 hover:text-red-300"
-                        aria-label="Delete payslip"
-                        title="Delete"
-                      >
-                        <Trash2 size={18} />
-                      </button>
+                      <div className="flex items-center justify-end gap-2">
+                        <button
+                          onClick={() => setSelectedPayslip(slip)}
+                          className="text-primary-400 hover:text-primary-300"
+                          aria-label="View payslip"
+                          title="View"
+                        >
+                          <Eye size={18} />
+                        </button>
+                        <button
+                          onClick={() => handleDeletePayslip(slip.id)}
+                          className="text-red-400 hover:text-red-300"
+                          aria-label="Delete payslip"
+                          title="Delete"
+                        >
+                          <Trash2 size={18} />
+                        </button>
+                      </div>
                     </td>
                   </tr>
                 ))}
@@ -948,6 +961,15 @@ export default function Payroll() {
           <ActiveSection />
         </div>
       </main>
+
+      {selectedPayslip && (
+        <PayslipDetail
+          payslip={selectedPayslip}
+          employeeName={getEmployeeName(selectedPayslip.employee_id)}
+          periodDesc={getPeriodDesc(selectedPayslip.period_id)}
+          onClose={() => setSelectedPayslip(null)}
+        />
+      )}
     </div>
   )
 }
