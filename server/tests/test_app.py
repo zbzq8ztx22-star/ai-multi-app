@@ -7,8 +7,6 @@ from typing import Any
 import pytest
 import requests
 
-from app import create_app
-
 
 class MockResponse:
     """A minimal stand-in for ``requests.Response``."""
@@ -29,16 +27,6 @@ class MockResponse:
         if self._json is None:
             raise ValueError("No JSON body")
         return self._json
-
-
-@pytest.fixture
-def app():
-    return create_app()
-
-
-@pytest.fixture
-def client(app):
-    return app.test_client()
 
 
 def _sse_event(event: dict[str, Any]) -> str:

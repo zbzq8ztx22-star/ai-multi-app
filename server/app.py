@@ -5,6 +5,7 @@ import json
 import logging
 import os
 import re
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -15,6 +16,13 @@ from flask_cors import CORS
 from werkzeug.utils import secure_filename
 
 BASE_DIR = Path(__file__).resolve().parent
+
+# Make server/payroll importable whether the app is run from the project root
+# or directly from the server directory.
+if str(BASE_DIR) not in sys.path:
+    sys.path.insert(0, str(BASE_DIR))
+
+from payroll import init_app as init_payroll
 
 # Load .env from the server directory, but never let it override env vars that
 # are already set (so tests can preset configuration).
@@ -483,6 +491,7 @@ def create_app(test_config: dict[str, Any] | None = None) -> Flask:
             current_app.logger.exception("Unhandled error in /api/health")
             return jsonify({"error": "Internal server error"}), 500
 
+    init_payroll(app)
     return app
 
 
