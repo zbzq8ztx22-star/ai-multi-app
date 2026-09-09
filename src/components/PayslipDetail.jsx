@@ -7,7 +7,7 @@ function formatCurrency(value) {
   return num.toLocaleString('en-US', { style: 'currency', currency: 'USD' })
 }
 
-export default function PayslipDetail({ payslip, employeeName, periodDesc, onClose }) {
+export default function PayslipDetail({ payslip, employeeName, periodDesc, payType, onClose }) {
   const panelRef = useRef(null)
 
   useEffect(() => {
@@ -79,7 +79,7 @@ export default function PayslipDetail({ payslip, employeeName, periodDesc, onClo
               <div className="flex items-center gap-2 text-gray-400 print:text-gray-600">
                 <Briefcase size={16} aria-hidden="true" /> Pay Type
               </div>
-              <p className="text-lg font-semibold capitalize">{payslip.pay_type || '-'}</p>
+              <p className="text-lg font-semibold capitalize">{payType || '-'}</p>
             </div>
             <div className="card space-y-2 print:border print:border-gray-300">
               <div className="flex items-center gap-2 text-gray-400 print:text-gray-600">

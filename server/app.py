@@ -72,7 +72,6 @@ def create_app(test_config: dict[str, Any] | None = None) -> Flask:
         supports_credentials=supports_credentials,
         methods=["GET", "POST", "OPTIONS"],
         allow_headers=["Content-Type"],
-        allow_private_network=False,
     )
 
     # JSON error handlers so we never return Flask HTML pages or raw tracebacks.

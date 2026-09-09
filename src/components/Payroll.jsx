@@ -967,6 +967,7 @@ export default function Payroll() {
           payslip={selectedPayslip}
           employeeName={getEmployeeName(selectedPayslip.employee_id)}
           periodDesc={getPeriodDesc(selectedPayslip.period_id)}
+          payType={employees.find(e => e.id === selectedPayslip.employee_id)?.pay_type || ''}
           onClose={() => setSelectedPayslip(null)}
         />
       )}
