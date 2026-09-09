@@ -95,7 +95,11 @@ OPENEXECUTIVE_API_URL=http://localhost:8000
 OPENEXECUTIVE_API_KEY=
 SECRET_KEY=change-me-in-production
 DEFAULT_ADMIN_PASSWORD=
+SESSION_COOKIE_SAMESITE=Lax
+SESSION_COOKIE_SECURE=1
 ```
+
+`SESSION_COOKIE_SAMESITE` controls the SameSite attribute on the session cookie (`Lax` by default). `SESSION_COOKIE_SECURE` marks the cookie Secure so it is only sent over HTTPS; set it to `0` only for local development over plain HTTP.
 
 A blank key is only an unconfigured example; it is not a real secret.
 `SECRET_KEY` is required; it signs Flask session cookies. Set `DEFAULT_ADMIN_PASSWORD` to create an `admin` user on startup.

@@ -440,3 +440,16 @@ def test_api_health_upstream_error(client, monkeypatch):
 
     assert resp.status_code == 502
     assert "health check failed" in body["error"].lower()
+
+
+# --------------------------------------------------------------------------- #
+# Review fix: AI routes require authentication
+# --------------------------------------------------------------------------- #
+
+
+def test_ai_routes_require_login(app):
+    anon = app.test_client()
+    for path in ("/api/chat", "/api/code", "/api/vision", "/api/docs"):
+        resp = anon.post(path, json={})
+        assert resp.status_code == 401, path
+    assert anon.get("/api/health").status_code != 401

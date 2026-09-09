@@ -24,6 +24,12 @@ def get_user_by_username(username: str) -> dict[str, Any] | None:
         return _row_to_dict(row) if row else None
 
 
+def _user_count() -> int:
+    with get_db() as conn:
+        row = conn.execute("SELECT COUNT(*) AS c FROM users").fetchone()
+        return row["c"]
+
+
 def get_user_by_id(user_id: int) -> dict[str, Any] | None:
     with get_db() as conn:
         row = conn.execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone()
@@ -93,6 +99,11 @@ def register() -> Any:
     if role not in ROLES:
         return jsonify({"error": "Invalid role"}), 400
 
+    # Elevated roles may only be assigned when bootstrapping the very first
+    # user or by a logged-in admin; anyone can register as a viewer.
+    if role != "viewer" and _user_count() > 0 and session.get("role") != "admin":
+        return jsonify({"error": "Only admins can assign roles"}), 403
+
     if get_user_by_username(username) is not None:
         return jsonify({"error": "Username already exists"}), 409
 
@@ -143,6 +154,13 @@ def _ensure_default_admin(password: str | None) -> None:
     create_user("admin", password, "admin")
 
 
+def _env_flag(name: str, default: bool) -> bool:
+    value = os.environ.get(name)
+    if value is None:
+        return default
+    return value.strip().lower() not in ("0", "false", "no")
+
+
 def init_auth(app: Any) -> None:
     """Configure session secret key and register auth routes."""
     secret_key = app.config.get("SECRET_KEY") or os.environ.get("SECRET_KEY")
@@ -152,6 +170,13 @@ def init_auth(app: Any) -> None:
             "or add it to your Flask app config."
         )
     app.secret_key = secret_key
+    app.config.setdefault("SESSION_COOKIE_HTTPONLY", True)
+    app.config.setdefault(
+        "SESSION_COOKIE_SAMESITE", os.environ.get("SESSION_COOKIE_SAMESITE", "Lax")
+    )
+    app.config.setdefault(
+        "SESSION_COOKIE_SECURE", _env_flag("SESSION_COOKIE_SECURE", True)
+    )
     app.register_blueprint(bp)
 
     default_password = os.environ.get("DEFAULT_ADMIN_PASSWORD")

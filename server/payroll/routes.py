@@ -4,7 +4,7 @@ import csv
 import io
 from typing import Any
 
-from flask import Blueprint, Response, jsonify, request
+from flask import Blueprint, Response, jsonify, request, session
 
 from . import assistant, service
 
@@ -16,7 +16,18 @@ def _require_login() -> Any:
     """All payroll endpoints require an authenticated session."""
     from auth import login_required
 
-    return login_required(lambda: None)()
+    result = login_required(lambda: None)()
+    if result is not None:
+        return result
+    # Viewers are read-only; admins may mutate. The assistant accepts POSTs
+    # from viewers because it only reads payroll data.
+    if (
+        request.method not in ("GET", "HEAD", "OPTIONS")
+        and request.endpoint != "payroll.payroll_assistant"
+        and session.get("role") != "admin"
+    ):
+        return jsonify({"error": "Forbidden"}), 403
+    return None
 
 
 def _get_json_body() -> dict[str, Any] | None:
