@@ -74,3 +74,20 @@ export async function apiPost(path, payload, options = {}) {
     ...options,
   })
 }
+
+export async function apiGet(path, options = {}) {
+  return apiFetch(path, { method: 'GET', ...options })
+}
+
+export async function apiPut(path, payload, options = {}) {
+  return apiFetch(path, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+    ...options,
+  })
+}
+
+export async function apiDelete(path, options = {}) {
+  return apiFetch(path, { method: 'DELETE', ...options })
+}

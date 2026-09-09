@@ -1,9 +1,10 @@
 import { useState } from 'react'
-import { MessageSquare, Image, Code, FileText, Menu, X } from 'lucide-react'
+import { MessageSquare, Image, Code, FileText, Wallet, Menu, X } from 'lucide-react'
 import Chat from './components/Chat'
 import Vision from './components/Vision'
 import CodeGen from './components/CodeGen'
 import Docs from './components/Docs'
+import Payroll from './components/Payroll'
 
 function App() {
   const [activeTab, setActiveTab] = useState('chat')
@@ -14,6 +15,7 @@ function App() {
     { id: 'vision', name: 'Vision', icon: Image },
     { id: 'code', name: 'Code', icon: Code },
     { id: 'docs', name: 'Documents', icon: FileText },
+    { id: 'payroll', name: 'Payroll', icon: Wallet },
   ]
 
   return (
@@ -70,6 +72,7 @@ function App() {
         {activeTab === 'vision' && <Vision />}
         {activeTab === 'code' && <CodeGen />}
         {activeTab === 'docs' && <Docs />}
+        {activeTab === 'payroll' && <Payroll />}
       </main>
     </div>
   )

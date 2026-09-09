@@ -410,3 +410,60 @@ def test_assistant_validation(client):
         json={"message": "hello", "committee_review": "false"},
     )
     assert resp.status_code == 400
+
+
+# --------------------------------------------------------------------------- #
+# Reports
+# --------------------------------------------------------------------------- #
+
+
+def test_payroll_report_json(client):
+    emp = client.post(
+        "/api/payroll/employees",
+        json={"name": "Kate", "pay_type": "hourly", "rate": 30.0},
+    ).get_json()
+    period = client.post(
+        "/api/payroll/pay-periods",
+        json={"start_date": "2026-09-01", "end_date": "2026-09-15"},
+    ).get_json()
+    client.post(
+        "/api/payroll/payslips",
+        json={"employee_id": emp["id"], "period_id": period["id"], "regular_hours": 40},
+    )
+
+    resp = client.get(f"/api/payroll/reports/{period['id']}")
+    assert resp.status_code == 200
+    report = resp.get_json()
+    assert report["total_employees"] == 1
+    assert report["rows"][0]["employee_name"] == "Kate"
+    assert report["rows"][0]["gross_pay"] == 1200.0
+    assert report["total_gross"] == 1200.0
+    assert report["total_net"] < report["total_gross"]
+
+
+def test_payroll_report_csv(client):
+    emp = client.post(
+        "/api/payroll/employees",
+        json={"name": "Leo", "pay_type": "hourly", "rate": 25.0},
+    ).get_json()
+    period = client.post(
+        "/api/payroll/pay-periods",
+        json={"start_date": "2026-09-01", "end_date": "2026-09-15"},
+    ).get_json()
+    client.post(
+        "/api/payroll/payslips",
+        json={"employee_id": emp["id"], "period_id": period["id"], "regular_hours": 40},
+    )
+
+    resp = client.get(f"/api/payroll/reports/{period['id']}/csv")
+    assert resp.status_code == 200
+    assert resp.content_type.startswith("text/csv")
+    assert "attachment" in resp.headers["Content-Disposition"]
+    csv_text = resp.data.decode("utf-8")
+    assert "employee_name" in csv_text
+    assert "Leo" in csv_text
+
+
+def test_payroll_report_not_found(client):
+    resp = client.get("/api/payroll/reports/999")
+    assert resp.status_code == 404

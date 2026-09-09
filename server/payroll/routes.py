@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import csv
+import io
 from typing import Any
 
-from flask import Blueprint, jsonify, request
+from flask import Blueprint, Response, jsonify, request
 
 from . import assistant, service
 
@@ -167,3 +169,50 @@ def payroll_assistant():
     if "error" in result:
         return _json_error(result["error"], 502)
     return jsonify(result)
+
+
+@bp.route("/reports/<int:period_id>", methods=["GET"])
+def payroll_report(period_id: int):
+    try:
+        report = service.get_payroll_report(period_id)
+        return jsonify(report)
+    except ValueError as exc:
+        return _json_error(str(exc), 404)
+
+
+@bp.route("/reports/<int:period_id>/csv", methods=["GET"])
+def payroll_report_csv(period_id: int):
+    try:
+        report = service.get_payroll_report(period_id)
+    except ValueError as exc:
+        return _json_error(str(exc), 404)
+
+    fieldnames = [
+        "employee_id",
+        "employee_name",
+        "position",
+        "pay_type",
+        "period_start",
+        "period_end",
+        "regular_hours",
+        "overtime_hours",
+        "gross_pay",
+        "federal_tax",
+        "state_tax",
+        "fica_tax",
+        "medicare_tax",
+        "other_deductions",
+        "net_pay",
+    ]
+    output = io.StringIO()
+    writer = csv.DictWriter(output, fieldnames=fieldnames)
+    writer.writeheader()
+    writer.writerows(report["rows"])
+    csv_data = output.getvalue()
+
+    filename = f"payroll_{report['period']['start_date']}_{report['period']['end_date']}.csv"
+    return Response(
+        csv_data,
+        mimetype="text/csv",
+        headers={"Content-Disposition": f"attachment; filename={filename}"},
+    )

@@ -434,3 +434,46 @@ def delete_payslip(payslip_id: int) -> bool:
         cursor = conn.execute("DELETE FROM payslips WHERE id = ?", (payslip_id,))
         conn.commit()
         return cursor.rowcount > 0
+
+
+def get_payroll_report(period_id: int) -> dict[str, Any]:
+    period = get_pay_period(period_id)
+    if period is None:
+        raise ValueError("Pay period not found")
+
+    employees_by_id = {emp["id"]: emp for emp in list_employees()}
+    payslips = list_payslips(period_id=period_id)
+
+    rows: list[dict[str, Any]] = []
+    for slip in payslips:
+        employee = employees_by_id.get(slip["employee_id"], {})
+        rows.append(
+            {
+                "employee_id": slip["employee_id"],
+                "employee_name": employee.get("name", f"Employee #{slip['employee_id']}"),
+                "position": employee.get("position", ""),
+                "pay_type": employee.get("pay_type", ""),
+                "period_start": period["start_date"],
+                "period_end": period["end_date"],
+                "regular_hours": slip["regular_hours"],
+                "overtime_hours": slip["overtime_hours"],
+                "gross_pay": slip["gross_pay"],
+                "federal_tax": slip["federal_tax"],
+                "state_tax": slip["state_tax"],
+                "fica_tax": slip["fica_tax"],
+                "medicare_tax": slip["medicare_tax"],
+                "other_deductions": slip["other_deductions"],
+                "net_pay": slip["net_pay"],
+            }
+        )
+
+    return {
+        "period": period,
+        "rows": rows,
+        "total_employees": len(rows),
+        "total_gross": round(sum(r["gross_pay"] for r in rows), 2),
+        "total_net": round(sum(r["net_pay"] for r in rows), 2),
+        "total_taxes": round(
+            sum(r["federal_tax"] + r["state_tax"] + r["fica_tax"] + r["medicare_tax"] for r in rows), 2
+        ),
+    }
