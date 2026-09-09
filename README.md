@@ -90,7 +90,7 @@ Set `BACKEND_SHARED_SECRET` in the environment file used by OpenExecutive core. 
 
 The backend configuration also includes:
 
-```dotenv
+```text
 OPENEXECUTIVE_API_URL=http://localhost:8000
 OPENEXECUTIVE_API_KEY=
 SECRET_KEY=change-me-in-production
