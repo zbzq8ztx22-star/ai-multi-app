@@ -44,7 +44,7 @@ def calculate_payslip(
 
     deductions = deductions or []
     other_deductions = round(
-        sum(float(d.get("amount", 0)) for d in deductions if d.get("category") != "tax"),
+        sum(float(d.get("amount", 0)) for d in deductions),
         2,
     )
 

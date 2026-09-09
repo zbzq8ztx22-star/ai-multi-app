@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import datetime
 import re
 import sqlite3
 from typing import Any
@@ -41,7 +42,11 @@ def _validate_rate(rate: Any) -> float:
 def _validate_date(date_str: Any, field: str = "date") -> str:
     if not isinstance(date_str, str) or not DATE_RE.match(date_str):
         raise ValueError(f"{field} must be a valid ISO date (YYYY-MM-DD)")
-    return date_str
+    try:
+        parsed = datetime.date.fromisoformat(date_str)
+    except ValueError:
+        raise ValueError(f"{field} must be a valid ISO date (YYYY-MM-DD)")
+    return parsed.isoformat()
 
 
 def _validate_option(value: Any, allowed: set[str], field: str, default: str | None = None) -> str:
@@ -270,9 +275,12 @@ def get_pay_period(period_id: int) -> dict[str, Any] | None:
 
 
 def update_pay_period(period_id: int, data: dict[str, Any]) -> dict[str, Any]:
-    if not get_pay_period(period_id):
+    old_period = get_pay_period(period_id)
+    if old_period is None:
         raise ValueError("Pay period not found")
+    old_year = _payslip_year(old_period)
     fields = _period_defaults(data)
+    new_year = _payslip_year(fields)
     now = now_utc()
     with get_db() as conn:
         conn.execute(
@@ -289,8 +297,21 @@ def update_pay_period(period_id: int, data: dict[str, Any]) -> dict[str, Any]:
                 period_id,
             ),
         )
+        # Moving a period can change which tax year its payslips belong to,
+        # so recompute every affected employee for both the old and new year.
+        employee_ids = [
+            row["employee_id"]
+            for row in conn.execute(
+                "SELECT DISTINCT employee_id FROM payslips WHERE period_id = ?",
+                (period_id,),
+            ).fetchall()
+        ]
+        for employee_id in employee_ids:
+            _recompute_employee_year(conn, employee_id, old_year)
+            if new_year != old_year:
+                _recompute_employee_year(conn, employee_id, new_year)
         conn.commit()
-        result = get_pay_period(period_id)
+        result = _get_pay_period_conn(conn, period_id)
         if result is None:
             raise ValueError("Pay period not found")
         return result
@@ -332,8 +353,13 @@ def _get_pay_period_conn(conn: Any, period_id: int) -> dict[str, Any] | None:
     return row_to_dict(row) if row else None
 
 
+def _effective_pay_date(period: dict[str, Any]) -> str:
+    """The date that determines which tax year a period belongs to."""
+    return period["pay_date"] or period["end_date"]
+
+
 def _payslip_year(period: dict[str, Any]) -> int:
-    return int(period["start_date"].split("-")[0])
+    return int(_effective_pay_date(period).split("-")[0])
 
 
 def _get_employee_ytd_conn(conn: Any, employee_id: int, year: int) -> dict[str, Any]:
@@ -355,29 +381,65 @@ def _get_employee_ytd_conn(conn: Any, employee_id: int, year: int) -> dict[str, 
     return row_to_dict(row)
 
 
-def _ytd_for_payslip_calculation(
-    conn: Any, employee_id: int, year: int, exclude_payslip_id: int | None = None
-) -> dict[str, Any]:
-    """Return YTD totals just before a given payslip.
+def _recompute_employee_year(conn: Any, employee_id: int, year: int) -> None:
+    """Recompute every payslip for an employee within a tax year.
 
-    If ``exclude_payslip_id`` is provided, subtract that payslip's wage
-    contributions so the tax engine sees the YTD as it was before the slip.
+    Payslips are recalculated in chronological pay order so year-to-date
+    wage caps (Social Security, Additional Medicare) are applied correctly
+    even when payslips were entered out of order.
     """
-    ytd = _get_employee_ytd_conn(conn, employee_id, year)
-    if exclude_payslip_id is None:
-        return ytd
+    employee = _get_employee_conn(conn, employee_id)
+    if employee is None:
+        return
+    rows = conn.execute(
+        """
+        SELECT payslips.* FROM payslips
+        JOIN pay_periods ON payslips.period_id = pay_periods.id
+        WHERE payslips.employee_id = ?
+          AND strftime('%Y', COALESCE(pay_periods.pay_date, pay_periods.end_date)) = ?
+        ORDER BY COALESCE(pay_periods.pay_date, pay_periods.end_date),
+                 pay_periods.id,
+                 payslips.id
+        """,
+        (employee_id, str(year)),
+    ).fetchall()
 
-    slip = conn.execute(
-        "SELECT fica_wages, medicare_wages FROM payslips WHERE id = ? AND employee_id = ?",
-        (exclude_payslip_id, employee_id),
-    ).fetchone()
-    if slip is None:
-        return ytd
+    ytd = {"fica_wages": 0.0, "medicare_wages": 0.0}
+    now = now_utc()
+    for slip in rows:
+        calc = calculate_payslip(
+            employee,
+            slip["regular_hours"],
+            slip["overtime_hours"],
+            _fetch_deductions(conn, slip["id"]),
+            ytd,
+        )
+        conn.execute(
+            """
+            UPDATE payslips
+            SET gross_pay = ?, federal_tax = ?, state_tax = ?, fica_tax = ?,
+                medicare_tax = ?, fica_wages = ?, medicare_wages = ?,
+                other_deductions = ?, net_pay = ?, updated_at = ?
+            WHERE id = ?
+            """,
+            (
+                calc["gross_pay"],
+                calc["federal_tax"],
+                calc["state_tax"],
+                calc["fica_tax"],
+                calc["medicare_tax"],
+                calc["fica_wages"],
+                calc["medicare_wages"],
+                calc["other_deductions"],
+                calc["net_pay"],
+                now,
+                slip["id"],
+            ),
+        )
+        ytd["fica_wages"] += calc["fica_wages"]
+        ytd["medicare_wages"] += calc["medicare_wages"]
 
-    return {
-        "fica_wages": max(0.0, ytd["fica_wages"] - (slip["fica_wages"] or 0)),
-        "medicare_wages": max(0.0, ytd["medicare_wages"] - (slip["medicare_wages"] or 0)),
-    }
+    _recalculate_employee_ytd(conn, employee_id, year)
 
 
 def _recalculate_employee_ytd(conn: Any, employee_id: int, year: int) -> None:
@@ -399,7 +461,7 @@ def _recalculate_employee_ytd(conn: Any, employee_id: int, year: int) -> None:
             COALESCE(SUM(medicare_wages), 0) as medicare_wages
         FROM payslips
         JOIN pay_periods ON payslips.period_id = pay_periods.id
-        WHERE payslips.employee_id = ? AND strftime('%Y', pay_periods.start_date) = ?
+        WHERE payslips.employee_id = ? AND strftime('%Y', COALESCE(pay_periods.pay_date, pay_periods.end_date)) = ?
         """,
         (employee_id, str(year)),
     ).fetchone()
@@ -437,7 +499,11 @@ def _build_payslip_values(
     raw_deductions = data.get("deductions", [])
     if not isinstance(raw_deductions, list):
         raise ValueError("deductions must be a list")
-    deductions = [_deduction_defaults(d) for d in raw_deductions]
+    deductions = []
+    for d in raw_deductions:
+        if not isinstance(d, dict):
+            raise ValueError("each deduction must be an object")
+        deductions.append(_deduction_defaults(d))
     calc = calculate_payslip(employee, regular_hours, overtime_hours, deductions, ytd)
     return calc, deductions
 
@@ -454,8 +520,7 @@ def create_payslip(employee_id: int, period_id: int, data: dict[str, Any]) -> di
             raise ValueError("Pay period not found")
 
         year = _payslip_year(period)
-        ytd = _ytd_for_payslip_calculation(conn, employee_id, year)
-        calc, deductions = _build_payslip_values(employee, data, ytd)
+        calc, deductions = _build_payslip_values(employee, data)
 
         try:
             cursor = conn.execute(
@@ -495,7 +560,7 @@ def create_payslip(employee_id: int, period_id: int, data: dict[str, Any]) -> di
                 """,
                 (payslip_id, deduction["name"], deduction["amount"], deduction["category"], now),
             )
-        _recalculate_employee_ytd(conn, employee_id, year)
+        _recompute_employee_year(conn, employee_id, year)
         conn.commit()
         return _get_payslip_with_deductions(conn, payslip_id)
 
@@ -546,8 +611,7 @@ def update_payslip(payslip_id: int, data: dict[str, Any]) -> dict[str, Any]:
             raise ValueError("Pay period not found")
 
         year = _payslip_year(period)
-        ytd = _ytd_for_payslip_calculation(conn, row["employee_id"], year, exclude_payslip_id=payslip_id)
-        calc, deductions = _build_payslip_values(employee, data, ytd)
+        calc, deductions = _build_payslip_values(employee, data)
 
         conn.execute(
             """
@@ -582,7 +646,7 @@ def update_payslip(payslip_id: int, data: dict[str, Any]) -> dict[str, Any]:
                 """,
                 (payslip_id, deduction["name"], deduction["amount"], deduction["category"], now),
             )
-        _recalculate_employee_ytd(conn, row["employee_id"], year)
+        _recompute_employee_year(conn, row["employee_id"], year)
         conn.commit()
         return _get_payslip_with_deductions(conn, payslip_id)
 
@@ -600,7 +664,7 @@ def delete_payslip(payslip_id: int) -> bool:
         year = _payslip_year(period)
 
         cursor = conn.execute("DELETE FROM payslips WHERE id = ?", (payslip_id,))
-        _recalculate_employee_ytd(conn, row["employee_id"], year)
+        _recompute_employee_year(conn, row["employee_id"], year)
         conn.commit()
         return cursor.rowcount > 0
 
