@@ -1,258 +1,507 @@
-from flask import Flask, request, jsonify, send_from_directory
-from flask_cors import CORS
-import os
-from werkzeug.utils import secure_filename
-import base64
-from PIL import Image
+from __future__ import annotations
+
 import io
-import requests
 import json
+import logging
+import os
+import re
+import sys
+from pathlib import Path
+from typing import Any
 
-app = Flask(__name__)
-CORS(app)
+import requests
+from dotenv import load_dotenv
+from flask import Flask, current_app, jsonify, request, send_from_directory
+from flask_cors import CORS
+from werkzeug.utils import secure_filename
 
-# Configuration
-UPLOAD_FOLDER = 'uploads'
-ALLOWED_EXTENSIONS = {'png', 'jpg', 'jpeg', 'gif', 'pdf', 'doc', 'docx', 'txt', 'md'}
-MAX_CONTENT_LENGTH = 16 * 1024 * 1024  # 16MB max file size
+BASE_DIR = Path(__file__).resolve().parent
 
-app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
-app.config['MAX_CONTENT_LENGTH'] = MAX_CONTENT_LENGTH
+# Make server/payroll importable whether the app is run from the project root
+# or directly from the server directory.
+if str(BASE_DIR) not in sys.path:
+    sys.path.insert(0, str(BASE_DIR))
 
-os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+from auth import init_auth
+from payroll import init_app as init_payroll
 
-# OpenExecutive API Configuration
-OPENEXECUTIVE_API_URL = os.environ.get('OPENEXECUTIVE_API_URL', 'http://localhost:8000')
-OPENEXECUTIVE_API_KEY = os.environ.get('OPENEXECUTIVE_API_KEY', '')  # x-api-key header
+# Load .env from the server directory, but never let it override env vars that
+# are already set (so tests can preset configuration).
+_env_path = BASE_DIR / ".env"
+if _env_path.exists():
+    load_dotenv(_env_path, override=False)
 
-def allowed_file(filename):
-    return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
+DEFAULT_OPENEXECUTIVE_API_URL = "http://localhost:8000"
 
-def encode_image(image_path):
-    with open(image_path, "rb") as image_file:
-        return base64.b64encode(image_file.read()).decode('utf-8')
+ALLOWED_IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp"}
+ALLOWED_DOCUMENT_EXTENSIONS = {".pdf", ".docx", ".doc", ".md", ".txt"}
 
-@app.route('/api/chat', methods=['POST'])
-def chat():
-    """Handle chat requests using OpenExecutive API"""
-    try:
-        data = request.json
-        message = data.get('message', '')
-        
-        if not OPENEXECUTIVE_API_URL:
-            # Fallback to simulated response if OpenExecutive not configured
-            response = f"I received your message: '{message}'. To enable real AI responses, set OPENEXECUTIVE_API_URL environment variable."
-            return jsonify({'response': response})
-        
-        # Call OpenExecutive chat endpoint
-        headers = {}
-        if OPENEXECUTIVE_API_KEY:
-            headers['x-api-key'] = OPENEXECUTIVE_API_KEY
-        
-        payload = {
-            'message': message,
-            'stream': False  # Use non-streaming for simplicity
-        }
-        
-        response = requests.post(
-            f'{OPENEXECUTIVE_API_URL}/chat',
-            json=payload,
-            headers=headers,
-            timeout=30
-        )
-        
-        if response.status_code == 200:
-            # OpenExecutive returns SSE streaming format
-            # Parse the SSE response to extract the actual content
-            response_text = response.text
-            lines = response_text.split('\n')
-            
-            # Extract content from SSE data lines
-            content_parts = []
+logger = logging.getLogger(__name__)
+http_session = requests.Session()
+http_session.trust_env = False
+
+
+def create_app(test_config: dict[str, Any] | None = None) -> Flask:
+    """Application factory. Use this in tests; module-level ``app`` supports
+    ``flask run`` / ``python app.py``."""
+    app = Flask(__name__, static_folder=None)
+
+    app.config["MAX_CONTENT_LENGTH"] = int(
+        os.environ.get("MAX_CONTENT_LENGTH", 16 * 1024 * 1024)
+    )
+
+    app.config["OPENEXECUTIVE_API_URL"] = os.environ.get(
+        "OPENEXECUTIVE_API_URL", DEFAULT_OPENEXECUTIVE_API_URL
+    ).rstrip("/")
+    app.config["OPENEXECUTIVE_API_KEY"] = os.environ.get("OPENEXECUTIVE_API_KEY", "")
+    app.config["OPENEXECUTIVE_TIMEOUT"] = int(os.environ.get("OPENEXECUTIVE_TIMEOUT", "120"))
+    app.config["HEALTH_TIMEOUT"] = int(os.environ.get("HEALTH_TIMEOUT", "5"))
+    app.config["SECRET_KEY"] = os.environ.get("SECRET_KEY", "")
+
+    if test_config:
+        app.config.update(test_config)
+
+    # CORS: CORS_ORIGINS env is comma-separated. Defaults to common local dev origins
+    # so supports_credentials can be enabled safely. Set CORS_ORIGINS in production.
+    origins_env = os.environ.get("CORS_ORIGINS", "http://localhost:3000,http://127.0.0.1:3000")
+    origins = [o.strip() for o in origins_env.split(",") if o.strip()] or ["http://localhost:3000"]
+    supports_credentials = "*" not in origins
+    CORS(
+        app,
+        origins=origins,
+        supports_credentials=supports_credentials,
+        methods=["GET", "POST", "OPTIONS"],
+        allow_headers=["Content-Type"],
+    )
+
+    # JSON error handlers so we never return Flask HTML pages or raw tracebacks.
+    @app.errorhandler(400)
+    def _bad_request(_exc: Any) -> tuple[Any, int]:
+        return jsonify({"error": "Bad request"}), 400
+
+    @app.errorhandler(404)
+    def _not_found(_exc: Any) -> tuple[Any, int]:
+        return jsonify({"error": "Not found"}), 404
+
+    @app.errorhandler(405)
+    def _method_not_allowed(_exc: Any) -> tuple[Any, int]:
+        return jsonify({"error": "Method not allowed"}), 405
+
+    @app.errorhandler(413)
+    def _payload_too_large(_exc: Any) -> tuple[Any, int]:
+        return jsonify({"error": "Payload too large"}), 413
+
+    @app.errorhandler(415)
+    def _unsupported_media(_exc: Any) -> tuple[Any, int]:
+        return jsonify({"error": "Unsupported media type"}), 415
+
+    @app.errorhandler(500)
+    def _internal(_exc: Any) -> tuple[Any, int]:
+        current_app.logger.exception("Internal server error")
+        return jsonify({"error": "Internal server error"}), 500
+
+    # ------------------------------------------------------------------ #
+    # Helpers
+    # ------------------------------------------------------------------ #
+
+    def _openexec_headers() -> dict[str, str]:
+        headers: dict[str, str] = {}
+        key = current_app.config.get("OPENEXECUTIVE_API_KEY")
+        if key:
+            headers["x-api-key"] = key
+        return headers
+
+    def _openexec_url(path: str) -> str:
+        return current_app.config["OPENEXECUTIVE_API_URL"] + path
+
+    def parse_sse(text: str) -> dict[str, Any]:
+        """Parse an SSE stream from OpenExecutive.
+
+        Supports both the current ``type: chunk`` events and legacy
+        ``type: content`` events. Preserves the first ``session_id`` seen and
+        stops at the first ``error`` event. Returns a dict with ``text``,
+        ``session_id``, ``error`` and ``events``.
+        """
+        chunks: list[str] = []
+        legacy: list[str] = []
+        session_id: str | None = None
+        error: str | None = None
+        events: list[dict[str, Any]] = []
+
+        if not text:
+            return {"text": "", "session_id": None, "error": None, "events": []}
+
+        text = text.replace("\r\n", "\n").replace("\r", "\n")
+        for raw_event in text.split("\n\n"):
+            lines = [ln for ln in raw_event.splitlines() if ln]
+            if not lines:
+                continue
+
+            data_parts: list[str] = []
             for line in lines:
-                if line.startswith('data: '):
-                    try:
-                        data_json = json.loads(line[6:])
-                        # Check if this is a content message (not debug/error/done)
-                        if data_json.get('type') == 'content':
-                            content_parts.append(data_json.get('content', ''))
-                        elif data_json.get('type') == 'error':
-                            return jsonify({'response': f"OpenExecutive error: {data_json.get('message', 'Unknown error')}"})
-                    except:
-                        pass
-            
-            if content_parts:
-                return jsonify({'response': ''.join(content_parts)})
-            else:
-                # If no content found, return demo response
-                return jsonify({'response': f"I received your message: '{message}'. OpenExecutive is running but requires a valid ANTHROPIC_API_KEY for real AI responses."})
-        else:
-            return jsonify({'response': f"Error from OpenExecutive API: {response.status_code} - {response.text}"})
-            
-    except requests.exceptions.ConnectionError:
-        return jsonify({'response': f"Could not connect to OpenExecutive at {OPENEXECUTIVE_API_URL}. Make sure it's running."})
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
+                if line.startswith("data:"):
+                    data_parts.append(line[5:].lstrip())
 
-@app.route('/api/vision', methods=['POST'])
-def vision():
-    """Handle image analysis requests"""
-    try:
-        if 'image' not in request.files:
-            return jsonify({'error': 'No image file provided'}), 400
-        
-        file = request.files['image']
-        
-        if file.filename == '':
-            return jsonify({'error': 'No file selected'}), 400
-        
-        if not allowed_file(file.filename):
-            return jsonify({'error': 'Invalid file type'}), 400
-        
+            if not data_parts:
+                continue
+
+            payload = "\n".join(data_parts)
+            try:
+                event = json.loads(payload)
+            except json.JSONDecodeError:
+                continue
+
+            if not isinstance(event, dict):
+                continue
+
+            events.append(event)
+
+            event_session_id = event.get("session_id")
+            if isinstance(event_session_id, str) and event_session_id:
+                session_id = event_session_id
+
+            event_type = event.get("type")
+            if event_type == "chunk":
+                chunks.append(str(event.get("content", "")))
+            elif event_type == "content":
+                # legacy
+                legacy.append(str(event.get("content", "")))
+            elif event_type == "error":
+                error = str(event.get("message", "Upstream error"))
+                session_id = event.get("session_id", session_id)
+                break
+            elif event_type == "done":
+                session_id = event.get("session_id", session_id)
+                break
+
+        full_text = "".join(chunks) if chunks else "".join(legacy)
+        return {
+            "text": full_text,
+            "session_id": session_id,
+            "error": error,
+            "events": events,
+        }
+
+    def _chat_with_openexec(
+        message: str,
+        session_id: str | None = None,
+        committee_review: bool = False,
+    ) -> requests.Response:
+        """Forward a chat request to OpenExecutive and return the raw response."""
+        payload: dict[str, Any] = {"message": message, "committee_review": bool(committee_review)}
+        if session_id:
+            payload["session_id"] = session_id
+
+        return http_session.post(
+            _openexec_url("/chat"),
+            json=payload,
+            headers=_openexec_headers(),
+            timeout=current_app.config["OPENEXECUTIVE_TIMEOUT"],
+        )
+
+    def _handle_chat_response(
+        resp: requests.Response, original_session_id: str | None = None
+    ) -> tuple[Any, int]:
+        """Consume an OpenExecutive SSE chat response and return a JSON Flask response."""
+        if resp.status_code >= 500:
+            current_app.logger.error("OpenExecutive returned %s", resp.status_code)
+            return jsonify({"error": "OpenExecutive error"}), 502
+        if resp.status_code >= 400:
+            return jsonify({"error": "OpenExecutive rejected the request"}), 502
+
+        parsed = parse_sse(resp.text)
+        if parsed["error"]:
+            return jsonify({
+                "error": parsed["error"],
+                "session_id": parsed["session_id"] or original_session_id,
+            }), 502
+
+        if not parsed["text"]:
+            return jsonify({"error": "OpenExecutive returned an empty response"}), 502
+
+        session_id = parsed["session_id"] or original_session_id
+        return jsonify({"response": parsed["text"], "session_id": session_id}), 200
+
+    def _strip_code_fences(text: str) -> str:
+        """Remove leading/trailing markdown code fences if present."""
+        text = text.strip()
+        # Remove an opening ``` or ```python etc. and a closing ```.
+        text = re.sub(r"^```(?:\w+)?\s*\n?", "", text)
+        text = re.sub(r"\n?```\s*$", "", text)
+        return text.strip()
+
+    # ------------------------------------------------------------------ #
+    # Routes
+    # ------------------------------------------------------------------ #
+
+    @app.route("/")
+    def index() -> Any:
+        dist_dir = BASE_DIR.parent / "dist"
+        if not (dist_dir / "index.html").is_file():
+            return jsonify({"error": "Frontend build not found. Run npm run build."}), 503
+        return send_from_directory(dist_dir, "index.html")
+
+    @app.route("/assets/<path:filename>")
+    def frontend_asset(filename: str) -> Any:
+        return send_from_directory(BASE_DIR.parent / "dist" / "assets", filename)
+
+    @app.route("/api/chat", methods=["POST"])
+    def chat() -> Any:
+        if not request.is_json:
+            return jsonify({"error": "Request body must be JSON"}), 400
+
+        data = request.get_json(silent=True)
+        if not isinstance(data, dict):
+            return jsonify({"error": "Invalid JSON body"}), 400
+
+        message_value = data.get("message")
+        if not isinstance(message_value, str) or not message_value.strip():
+            return jsonify({"error": "message must be a non-empty string"}), 400
+        message = message_value.strip()
+
+        session_id = data.get("session_id")
+        if session_id is not None and (not isinstance(session_id, str) or not session_id):
+            return jsonify({"error": "session_id must be a non-empty string"}), 400
+
+        committee_review = data.get("committee_review", False)
+        if not isinstance(committee_review, bool):
+            return jsonify({"error": "committee_review must be a boolean"}), 400
+
+        try:
+            resp = _chat_with_openexec(message, session_id, committee_review)
+            return _handle_chat_response(resp, session_id)
+        except requests.exceptions.ConnectionError:
+            current_app.logger.warning("OpenExecutive connection refused at %s", _openexec_url("/chat"))
+            return jsonify({"error": "OpenExecutive service unavailable"}), 503
+        except requests.exceptions.Timeout:
+            return jsonify({"error": "OpenExecutive request timed out"}), 503
+        except requests.exceptions.RequestException:
+            return jsonify({"error": "OpenExecutive request failed"}), 502
+        except Exception:
+            current_app.logger.exception("Unhandled error in /api/chat")
+            return jsonify({"error": "Internal server error"}), 500
+
+    @app.route("/api/vision", methods=["POST"])
+    def vision() -> Any:
+        if "image" not in request.files:
+            return jsonify({"error": "image file is required"}), 400
+
+        file = request.files["image"]
+        if not file or file.filename == "":
+            return jsonify({"error": "image filename is required"}), 400
+
         filename = secure_filename(file.filename)
-        filepath = os.path.join(app.config['UPLOAD_FOLDER'], filename)
-        file.save(filepath)
-        
-        # For demo purposes, return a simulated analysis
-        # In production, integrate with GPT-4 Vision or similar
-        analysis = f"""Image Analysis Results:
-- File: {filename}
-- Size: {os.path.getsize(filepath)} bytes
-- Format: {filename.rsplit('.', 1)[1].upper()}
+        ext = Path(filename).suffix.lower()
+        if ext not in ALLOWED_IMAGE_EXTENSIONS:
+            return jsonify({"error": f"Unsupported image type: {ext}"}), 415
 
-This is a simulated analysis. To enable real AI vision capabilities:
-1. Set OPENAI_API_KEY environment variable
-2. The system will use GPT-4 Vision API
-3. Image will be analyzed for content, objects, text, and context"""
-        
-        return jsonify({'analysis': analysis})
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
+        content = file.read()
+        if len(content) > current_app.config["MAX_CONTENT_LENGTH"]:
+            return jsonify({"error": "Image too large"}), 413
 
-@app.route('/api/code', methods=['POST'])
-def code():
-    """Handle code generation requests"""
-    try:
-        data = request.json
-        prompt = data.get('prompt', '')
-        language = data.get('language', 'python')
-        
-        # For demo purposes, return a simulated code generation
-        # In production, integrate with OpenAI Codex or similar
-        code = f"""# Generated code for: {prompt}
-# Language: {language}
+        message = (request.form.get("message") or "").strip()
+        message = message or "Describe the contents of this image."
+        session_id = (request.form.get("session_id") or "").strip() or None
 
-# This is a simulated code generation.
-# To enable real AI code generation:
-# 1. Set OPENAI_API_KEY environment variable
-# 2. The system will use GPT-4 or Codex API
-# 3. Code will be generated based on your prompt
+        data: dict[str, Any] = {"message": message}
+        if session_id:
+            data["session_id"] = session_id
+        if "committee_review" in request.form:
+            data["committee_review"] = request.form.get("committee_review", "").lower() in (
+                "true", "1", "yes"
+            )
 
-def example_function():
-    \"\"\"
-    Example function placeholder.
-    Replace with actual generated code.
-    \"\"\"
-    pass
+        content_type = file.content_type or "application/octet-stream"
+        files = [("files", (filename, io.BytesIO(content), content_type))]
+
+        try:
+            resp = http_session.post(
+                _openexec_url("/chat/upload"),
+                data=data,
+                files=files,
+                headers=_openexec_headers(),
+                timeout=current_app.config["OPENEXECUTIVE_TIMEOUT"],
+            )
+            result, status = _handle_chat_response(resp, session_id)
+            if status != 200:
+                return result, status
+            body = result.get_json(force=True) or {}
+            return jsonify({
+                "analysis": body.get("response", ""),
+                "session_id": body.get("session_id"),
+            }), 200
+        except requests.exceptions.ConnectionError:
+            current_app.logger.warning("OpenExecutive connection refused at %s", _openexec_url("/chat/upload"))
+            return jsonify({"error": "OpenExecutive service unavailable"}), 503
+        except requests.exceptions.Timeout:
+            return jsonify({"error": "OpenExecutive request timed out"}), 503
+        except requests.exceptions.RequestException:
+            return jsonify({"error": "OpenExecutive request failed"}), 502
+        except Exception:
+            current_app.logger.exception("Unhandled error in /api/vision")
+            return jsonify({"error": "Internal server error"}), 500
+
+    @app.route("/api/code", methods=["POST"])
+    def code() -> Any:
+        if not request.is_json:
+            return jsonify({"error": "Request body must be JSON"}), 400
+
+        data = request.get_json(silent=True)
+        if not isinstance(data, dict):
+            return jsonify({"error": "Invalid JSON body"}), 400
+
+        prompt_value = data.get("prompt")
+        if not isinstance(prompt_value, str) or not prompt_value.strip():
+            return jsonify({"error": "prompt must be a non-empty string"}), 400
+        prompt = prompt_value.strip()
+
+        language = str(data.get("language") or "python").strip().lower() or "python"
+        session_id = data.get("session_id")
+        if session_id is not None and (not isinstance(session_id, str) or not session_id):
+            return jsonify({"error": "session_id must be a non-empty string"}), 400
+
+        message = (
+            f"Generate only executable {language} code for the following request. "
+            f"Do not include explanations, markdown code fences, or prose. "
+            f"Output only the code itself.\n\nRequest: {prompt}"
+        )
+
+        try:
+            resp = _chat_with_openexec(message, session_id, committee_review=False)
+            result, status = _handle_chat_response(resp, session_id)
+            if status != 200:
+                return result, status
+
+            body = result.get_json(force=True) or {}
+            code_text = _strip_code_fences(body.get("response", ""))
+            return jsonify({"code": code_text, "session_id": body.get("session_id")}), 200
+        except requests.exceptions.ConnectionError:
+            return jsonify({"error": "OpenExecutive service unavailable"}), 503
+        except requests.exceptions.Timeout:
+            return jsonify({"error": "OpenExecutive request timed out"}), 503
+        except requests.exceptions.RequestException:
+            return jsonify({"error": "OpenExecutive request failed"}), 502
+        except Exception:
+            current_app.logger.exception("Unhandled error in /api/code")
+            return jsonify({"error": "Internal server error"}), 500
+
+    @app.route("/api/docs", methods=["POST"])
+    def docs() -> Any:
+        if "document" not in request.files:
+            return jsonify({"error": "document file is required"}), 400
+
+        file = request.files["document"]
+        if not file or file.filename == "":
+            return jsonify({"error": "document filename is required"}), 400
+
+        filename = secure_filename(file.filename)
+        ext = Path(filename).suffix.lower()
+        if ext not in ALLOWED_DOCUMENT_EXTENSIONS:
+            return jsonify({
+                "error": (
+                    f"Unsupported document type: {ext}. "
+                    f"Allowed: {', '.join(sorted(ALLOWED_DOCUMENT_EXTENSIONS))}"
+                )
+            }), 415
+
+        content = file.read()
+        if len(content) > current_app.config["MAX_CONTENT_LENGTH"]:
+            return jsonify({"error": "Document too large"}), 413
+
+        domain = (request.form.get("domain") or "").strip() or "general"
+        if not re.match(r"^[A-Za-z0-9_-]+$", domain):
+            return jsonify({"error": "Invalid domain"}), 400
+
+        content_type = file.content_type or "application/octet-stream"
+        files = {"file": (filename, io.BytesIO(content), content_type)}
+        data = {"domain": domain}
+
+        try:
+            resp = http_session.post(
+                _openexec_url("/documents"),
+                files=files,
+                data=data,
+                headers=_openexec_headers(),
+                timeout=current_app.config["OPENEXECUTIVE_TIMEOUT"],
+            )
+            if resp.status_code == 200:
+                try:
+                    upstream = resp.json()
+                except ValueError:
+                    return jsonify({"error": "Invalid response from OpenExecutive"}), 502
+                if not isinstance(upstream, dict):
+                    return jsonify({"error": "Invalid response from OpenExecutive"}), 502
+
+                chunks_indexed = upstream.get("chunks_indexed", 0)
+                summary = (
+                    f"Indexed {chunks_indexed} chunk(s) from "
+                    f"{upstream.get('filename', filename)} under "
+                    f"{upstream.get('domain', domain)} "
+                    f"(status: {upstream.get('status', 'indexed')})."
+                )
+                result = {
+                    "filename": upstream.get("filename", filename),
+                    "chunks_indexed": chunks_indexed,
+                    "domain": upstream.get("domain", domain),
+                    "status": upstream.get("status", "indexed"),
+                    "summary": summary,
+                    "analysis": summary,
+                }
+                return jsonify(result), 200
+            elif resp.status_code >= 500:
+                current_app.logger.error("OpenExecutive /documents returned %s", resp.status_code)
+                return jsonify({"error": "OpenExecutive error"}), 502
+            else:
+                return jsonify({"error": "OpenExecutive rejected the document"}), 502
+        except requests.exceptions.ConnectionError:
+            current_app.logger.warning("OpenExecutive connection refused at %s", _openexec_url("/documents"))
+            return jsonify({"error": "OpenExecutive service unavailable"}), 503
+        except requests.exceptions.Timeout:
+            return jsonify({"error": "OpenExecutive request timed out"}), 503
+        except requests.exceptions.RequestException:
+            return jsonify({"error": "OpenExecutive request failed"}), 502
+        except Exception:
+            current_app.logger.exception("Unhandled error in /api/docs")
+            return jsonify({"error": "Internal server error"}), 500
+
+    @app.route("/api/health", methods=["GET"])
+    def health() -> Any:
+        try:
+            resp = http_session.get(
+                _openexec_url("/health"),
+                headers=_openexec_headers(),
+                timeout=current_app.config["HEALTH_TIMEOUT"],
+            )
+            if resp.status_code == 200:
+                try:
+                    upstream = resp.json()
+                except ValueError:
+                    upstream = {"raw": resp.text}
+                status = upstream.get("status") if isinstance(upstream, dict) else None
+                return jsonify({"status": status or "ok", "openexecutive": "connected"}), 200
+
+            current_app.logger.warning("OpenExecutive /health returned %s", resp.status_code)
+            return jsonify({"error": "OpenExecutive health check failed"}), 502
+        except requests.exceptions.ConnectionError:
+            return jsonify({"error": "OpenExecutive service unavailable"}), 503
+        except requests.exceptions.Timeout:
+            return jsonify({"error": "OpenExecutive health check timed out"}), 503
+        except requests.exceptions.RequestException:
+            return jsonify({"error": "OpenExecutive request failed"}), 502
+        except Exception:
+            current_app.logger.exception("Unhandled error in /api/health")
+            return jsonify({"error": "Internal server error"}), 500
+
+    init_payroll(app)
+    init_auth(app)
+    return app
+
+
+# Module-level app for ``flask run`` / direct execution.
+app = create_app()
 
 if __name__ == "__main__":
-    example_function()"""
-        
-        return jsonify({'code': code})
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
-
-@app.route('/api/docs', methods=['POST'])
-def docs():
-    """Handle document analysis using OpenExecutive API"""
-    try:
-        if 'document' not in request.files:
-            return jsonify({'error': 'No document file provided'}), 400
-        
-        file = request.files['document']
-        
-        if file.filename == '':
-            return jsonify({'error': 'No file selected'}), 400
-        
-        if not allowed_file(file.filename):
-            return jsonify({'error': 'Invalid file type'}), 400
-        
-        if not OPENEXECUTIVE_API_URL:
-            # Fallback to local analysis if OpenExecutive not configured
-            filename = secure_filename(file.filename)
-            filepath = os.path.join(app.config['UPLOAD_FOLDER'], filename)
-            file.save(filepath)
-            
-            content = ''
-            try:
-                with open(filepath, 'r', encoding='utf-8') as f:
-                    content = f.read()
-            except:
-                content = '[Binary file - content not readable]'
-            
-            analysis = f"""Document Analysis Results (Local):
-- File: {filename}
-- Size: {os.path.getsize(filepath)} bytes
-- Content length: {len(content)} characters
-
-Content Preview:
-{content[:500]}{'...' if len(content) > 500 else ''}
-
-To enable AI-powered analysis via OpenExecutive, set OPENEXECUTIVE_API_URL environment variable."""
-            
-            return jsonify({'analysis': analysis})
-        
-        # Forward document to OpenExecutive
-        headers = {}
-        if OPENEXECUTIVE_API_KEY:
-            headers['x-api-key'] = OPENEXECUTIVE_API_KEY
-        
-        files = {'file': (file.filename, file.stream, file.content_type)}
-        
-        response = requests.post(
-            f'{OPENEXECUTIVE_API_URL}/documents',
-            files=files,
-            headers=headers,
-            timeout=30
-        )
-        
-        if response.status_code == 200:
-            try:
-                result = response.json()
-                return jsonify({'analysis': result.get('message', 'Document uploaded successfully to OpenExecutive')})
-            except:
-                return jsonify({'analysis': f"Document uploaded to OpenExecutive. Response: {response.text}"})
-        else:
-            return jsonify({'analysis': f"Error from OpenExecutive API: {response.status_code} - {response.text}"})
-            
-    except requests.exceptions.ConnectionError:
-        return jsonify({'analysis': f"Could not connect to OpenExecutive at {OPENEXECUTIVE_API_URL}. Make sure it's running."})
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
-
-@app.route('/')
-def index():
-    """Serve the frontend HTML file"""
-    return send_from_directory('..', 'index.html')
-
-@app.route('/styles.css')
-def styles():
-    """Serve the CSS file"""
-    return send_from_directory('..', 'styles.css')
-
-@app.route('/app.js')
-def app_js():
-    """Serve the JavaScript file"""
-    return send_from_directory('..', 'app.js')
-
-@app.route('/api/health', methods=['GET'])
-def health():
-    """Health check endpoint"""
-    return jsonify({
-        'status': 'healthy',
-        'openexecutive_configured': bool(OPENEXECUTIVE_API_URL),
-        'openexecutive_url': OPENEXECUTIVE_API_URL
-    })
-
-if __name__ == '__main__':
-    app.run(debug=True, port=5000)
+    # Debug is disabled unless explicitly enabled via FLASK_DEBUG.
+    debug = os.environ.get("FLASK_DEBUG", "").lower() in ("1", "true", "yes")
+    port = int(os.environ.get("PORT", "5000"))
+    app.run(host="0.0.0.0", port=port, debug=debug)
