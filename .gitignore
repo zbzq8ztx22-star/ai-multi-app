@@ -1,6 +1,7 @@
 .env
 server/.env
 server/uploads/
+server/data/
 __pycache__/
 *.py[cod]
 .pytest_cache/
