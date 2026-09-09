@@ -4,7 +4,7 @@ from typing import Any
 
 from flask import Blueprint, jsonify, request
 
-from . import service
+from . import assistant, service
 
 bp = Blueprint("payroll", __name__, url_prefix="/api/payroll")
 
@@ -143,3 +143,27 @@ def payslip(payslip_id: int):
         return jsonify(service.update_payslip(payslip_id, body))
     except ValueError as exc:
         return _json_error(str(exc))
+
+
+@bp.route("/assistant", methods=["POST"])
+def payroll_assistant():
+    body = _get_json_body()
+    if not isinstance(body, dict):
+        return _json_error("Request body must be a JSON object")
+
+    message = body.get("message")
+    if not isinstance(message, str) or not message.strip():
+        return _json_error("message is required and must be a non-empty string")
+
+    session_id = body.get("session_id")
+    if session_id is not None and (not isinstance(session_id, str) or not session_id):
+        return _json_error("session_id must be a non-empty string")
+
+    committee_review = body.get("committee_review", False)
+    if not isinstance(committee_review, bool):
+        return _json_error("committee_review must be a boolean")
+
+    result = assistant.ask(message.strip(), session_id, committee_review)
+    if "error" in result:
+        return _json_error(result["error"], 502)
+    return jsonify(result)

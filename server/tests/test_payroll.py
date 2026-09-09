@@ -2,7 +2,22 @@ from __future__ import annotations
 
 import pytest
 
+from tests.helpers import MockResponse, _sse_event
 from payroll.calculator import calculate_payslip
+
+
+class FakeOpenExecSession:
+    """Fake requests.Session that records calls and returns a fixed response."""
+
+    def __init__(self, response):
+        self.response = response
+        self.calls = {}
+
+    def post(self, url, **kwargs):
+        self.calls["url"] = url
+        self.calls["json"] = kwargs.get("json")
+        self.calls["headers"] = kwargs.get("headers")
+        return self.response
 
 
 # --------------------------------------------------------------------------- #
@@ -320,3 +335,78 @@ def test_delete_payslip(client):
     assert resp.status_code == 200
     resp = client.get(f"/api/payroll/payslips/{payslip['id']}")
     assert resp.status_code == 404
+
+
+# --------------------------------------------------------------------------- #
+# Assistant
+# --------------------------------------------------------------------------- #
+
+
+def test_assistant_local_command_list_employees(client):
+    client.post(
+        "/api/payroll/employees",
+        json={"name": "Zoe", "pay_type": "hourly", "rate": 22.0},
+    )
+    resp = client.post("/api/payroll/assistant", json={"message": "list employees"})
+    assert resp.status_code == 200
+    body = resp.get_json()
+    assert "Zoe" in body["response"]
+
+
+def test_assistant_local_command_list_periods(client):
+    client.post(
+        "/api/payroll/pay-periods",
+        json={"start_date": "2026-09-01", "end_date": "2026-09-15"},
+    )
+    resp = client.post("/api/payroll/assistant", json={"message": "show pay periods"})
+    assert resp.status_code == 200
+    body = resp.get_json()
+    assert "2026-09-01" in body["response"]
+
+
+def test_assistant_asks_openexecutive_with_context(client, monkeypatch):
+    sse = (
+        _sse_event({"type": "chunk", "content": "You have 1 employee.", "session_id": "sess-p"})
+        + _sse_event({"type": "done", "session_id": "sess-p"})
+    )
+    fake = FakeOpenExecSession(MockResponse(text=sse, status_code=200))
+    monkeypatch.setattr("payroll.openexec.http_session", fake)
+
+    client.post(
+        "/api/payroll/employees",
+        json={"name": "Leo", "pay_type": "salary", "rate": 52000.0},
+    )
+    resp = client.post(
+        "/api/payroll/assistant",
+        json={"message": "how many employees do I have?", "session_id": "sess-1"},
+    )
+    assert resp.status_code == 200
+    body = resp.get_json()
+    assert body["response"] == "You have 1 employee."
+    assert body["session_id"] == "sess-p"
+    assert fake.calls["url"] == "http://openexec.test/chat"
+    assert "Leo" in fake.calls["json"]["message"]
+    assert fake.calls["json"]["session_id"] == "sess-1"
+    assert fake.calls["headers"]["x-api-key"] == "test-key"
+
+
+def test_assistant_openexecutive_error_returns_502(client, monkeypatch):
+    sse = _sse_event({"type": "error", "message": "model failure", "session_id": "sess-err"})
+    fake = FakeOpenExecSession(MockResponse(text=sse, status_code=200))
+    monkeypatch.setattr("payroll.openexec.http_session", fake)
+
+    resp = client.post("/api/payroll/assistant", json={"message": "what is payroll?"})
+    assert resp.status_code == 502
+    assert "model failure" in resp.get_json()["error"]
+
+
+def test_assistant_validation(client):
+    resp = client.post("/api/payroll/assistant", json={})
+    assert resp.status_code == 400
+    resp = client.post("/api/payroll/assistant", json={"message": "   "})
+    assert resp.status_code == 400
+    resp = client.post(
+        "/api/payroll/assistant",
+        json={"message": "hello", "committee_review": "false"},
+    )
+    assert resp.status_code == 400
