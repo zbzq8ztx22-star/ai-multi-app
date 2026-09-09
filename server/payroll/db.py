@@ -136,9 +136,30 @@ def get_db() -> Generator[sqlite3.Connection, None, None]:
         conn.close()
 
 
+def _column_exists(conn: sqlite3.Connection, table: str, column: str) -> bool:
+    rows = conn.execute(f"PRAGMA table_info({table})").fetchall()
+    return any(row["name"] == column for row in rows)
+
+
+def _migrate(conn: sqlite3.Connection) -> None:
+    """Add columns that were introduced after the initial schema."""
+    migrations: list[tuple[str, str, str]] = [
+        ("employees", "dependents", "INTEGER NOT NULL DEFAULT 0"),
+        ("employees", "other_income", "REAL NOT NULL DEFAULT 0"),
+        ("employees", "w4_deductions", "REAL NOT NULL DEFAULT 0"),
+        ("employees", "multiple_jobs", "INTEGER NOT NULL DEFAULT 0"),
+        ("payslips", "fica_wages", "REAL NOT NULL DEFAULT 0"),
+        ("payslips", "medicare_wages", "REAL NOT NULL DEFAULT 0"),
+    ]
+    for table, column, ddl in migrations:
+        if not _column_exists(conn, table, column):
+            conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {ddl}")
+
+
 def init_db() -> None:
     with get_db() as conn:
         conn.executescript(SCHEMA)
+        _migrate(conn)
         conn.commit()
 
 
