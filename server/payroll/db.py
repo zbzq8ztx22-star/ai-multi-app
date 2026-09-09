@@ -16,7 +16,7 @@ CREATE TABLE IF NOT EXISTS employees (
     name TEXT NOT NULL,
     position TEXT,
     pay_type TEXT NOT NULL CHECK(pay_type IN ('hourly', 'salary')),
-    salary_frequency TEXT NOT NULL DEFAULT 'biweekly' CHECK(salary_frequency IN ('weekly', 'biweekly', 'semimonthly', 'monthly', 'annual')),
+    pay_frequency TEXT NOT NULL DEFAULT 'biweekly' CHECK(pay_frequency IN ('weekly', 'biweekly', 'semimonthly', 'monthly', 'annual')),
     rate REAL NOT NULL CHECK(rate > 0),
     state TEXT NOT NULL DEFAULT '',
     filing_status TEXT NOT NULL DEFAULT 'single' CHECK(filing_status IN ('single', 'married', 'hoh')),

@@ -18,8 +18,10 @@ def test_calculate_hourly_payslip_without_deductions():
     }
     result = calculate_payslip(employee, regular_hours=40, overtime_hours=5)
     assert result["gross_pay"] == 950.0  # 40*20 + 5*30
-    assert result["net_pay"] == 950.0
-    assert result["other_deductions"] == 0.0
+    assert result["federal_tax"] == 37.31
+    assert result["fica_tax"] == 58.9
+    assert result["medicare_tax"] == 13.78
+    assert result["net_pay"] == 840.01
 
 
 def test_calculate_salary_payslip_biweekly():
@@ -27,11 +29,16 @@ def test_calculate_salary_payslip_biweekly():
         "name": "Bob",
         "pay_type": "salary",
         "rate": 52000.0,
-        "salary_frequency": "biweekly",
+        "pay_frequency": "biweekly",
+        "state": "TX",
+        "filing_status": "single",
     }
     result = calculate_payslip(employee)
     assert result["gross_pay"] == 2000.0  # 52000 / 26
-    assert result["net_pay"] == 2000.0
+    assert result["federal_tax"] == 161.6
+    assert result["fica_tax"] == 124.0
+    assert result["medicare_tax"] == 29.0
+    assert result["net_pay"] == 1685.4
 
 
 def test_calculate_salary_payslip_monthly():
@@ -39,14 +46,26 @@ def test_calculate_salary_payslip_monthly():
         "name": "Carol",
         "pay_type": "salary",
         "rate": 60000.0,
-        "salary_frequency": "monthly",
+        "pay_frequency": "monthly",
+        "state": "TX",
+        "filing_status": "single",
     }
     result = calculate_payslip(employee)
     assert result["gross_pay"] == 5000.0
+    assert result["federal_tax"] == 430.12
+    assert result["fica_tax"] == 310.0
+    assert result["medicare_tax"] == 72.5
+    assert result["net_pay"] == 4187.38
 
 
 def test_calculate_payslip_with_deductions():
-    employee = {"name": "Dave", "pay_type": "hourly", "rate": 25.0}
+    employee = {
+        "name": "Dave",
+        "pay_type": "hourly",
+        "rate": 25.0,
+        "state": "TX",
+        "filing_status": "single",
+    }
     deductions = [
         {"name": "Health Insurance", "amount": 50.0, "category": "benefit"},
         {"name": "Gym", "amount": 25.0, "category": "other"},
@@ -54,7 +73,10 @@ def test_calculate_payslip_with_deductions():
     result = calculate_payslip(employee, regular_hours=40, deductions=deductions)
     assert result["gross_pay"] == 1000.0
     assert result["other_deductions"] == 75.0
-    assert result["net_pay"] == 925.0
+    assert result["federal_tax"] == 42.31
+    assert result["fica_tax"] == 62.0
+    assert result["medicare_tax"] == 14.5
+    assert result["net_pay"] == 806.19
 
 
 def test_calculator_rejects_negative_hours():
@@ -92,7 +114,7 @@ def test_create_and_list_employees(client):
 def test_get_employee_by_id(client):
     resp = client.post(
         "/api/payroll/employees",
-        json={"name": "Bob", "pay_type": "salary", "rate": 52000.0, "salary_frequency": "biweekly"},
+        json={"name": "Bob", "pay_type": "salary", "rate": 52000.0, "pay_frequency": "biweekly"},
     )
     employee_id = resp.get_json()["id"]
     resp = client.get(f"/api/payroll/employees/{employee_id}")
@@ -195,7 +217,10 @@ def test_create_payslip_hourly(client):
     body = resp.get_json()
     assert body["gross_pay"] == 950.0
     assert body["other_deductions"] == 50.0
-    assert body["net_pay"] == 900.0
+    assert body["federal_tax"] == 37.31
+    assert body["fica_tax"] == 58.9
+    assert body["medicare_tax"] == 13.78
+    assert body["net_pay"] == 790.01
     assert len(body["deductions"]) == 1
 
 
@@ -215,6 +240,10 @@ def test_create_payslip_salary(client):
     assert resp.status_code == 201
     body = resp.get_json()
     assert body["gross_pay"] == 2000.0
+    assert body["federal_tax"] == 161.6
+    assert body["fica_tax"] == 124.0
+    assert body["medicare_tax"] == 29.0
+    assert body["net_pay"] == 1685.4
 
 
 def test_duplicate_payslip_rejected(client):

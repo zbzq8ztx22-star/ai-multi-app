@@ -10,7 +10,7 @@ from .db import get_db, now_utc, row_to_dict
 DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
 PAY_TYPES = {"hourly", "salary"}
-SALARY_FREQUENCIES = {"weekly", "biweekly", "semimonthly", "monthly", "annual"}
+PAY_FREQUENCIES = {"weekly", "biweekly", "semimonthly", "monthly", "annual"}
 FILING_STATUSES = {"single", "married", "hoh"}
 PERIOD_STATUSES = {"open", "closed"}
 DEDUCTION_CATEGORIES = {"tax", "benefit", "garnishment", "other"}
@@ -67,8 +67,11 @@ def _employee_defaults(data: dict[str, Any]) -> dict[str, Any]:
         "name": _validate_name(data.get("name")),
         "position": str(data.get("position", "")).strip(),
         "pay_type": _validate_pay_type(data.get("pay_type")),
-        "salary_frequency": _validate_option(
-            data.get("salary_frequency"), SALARY_FREQUENCIES, "salary_frequency", "biweekly"
+        "pay_frequency": _validate_option(
+            data.get("pay_frequency") or data.get("salary_frequency"),
+            PAY_FREQUENCIES,
+            "pay_frequency",
+            "biweekly",
         ),
         "rate": _validate_rate(data.get("rate")),
         "state": str(data.get("state", "")).strip().upper()[:2],
@@ -122,7 +125,7 @@ def create_employee(data: dict[str, Any]) -> dict[str, Any]:
         cursor = conn.execute(
             """
             INSERT INTO employees
-                (name, position, pay_type, salary_frequency, rate, state, filing_status, federal_withholding, created_at, updated_at)
+                (name, position, pay_type, pay_frequency, rate, state, filing_status, federal_withholding, created_at, updated_at)
             VALUES
                 (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
@@ -130,7 +133,7 @@ def create_employee(data: dict[str, Any]) -> dict[str, Any]:
                 fields["name"],
                 fields["position"],
                 fields["pay_type"],
-                fields["salary_frequency"],
+                fields["pay_frequency"],
                 fields["rate"],
                 fields["state"],
                 fields["filing_status"],
@@ -164,7 +167,7 @@ def update_employee(employee_id: int, data: dict[str, Any]) -> dict[str, Any]:
         conn.execute(
             """
             UPDATE employees
-            SET name = ?, position = ?, pay_type = ?, salary_frequency = ?,
+            SET name = ?, position = ?, pay_type = ?, pay_frequency = ?,
                 rate = ?, state = ?, filing_status = ?, federal_withholding = ?, updated_at = ?
             WHERE id = ?
             """,
@@ -172,7 +175,7 @@ def update_employee(employee_id: int, data: dict[str, Any]) -> dict[str, Any]:
                 fields["name"],
                 fields["position"],
                 fields["pay_type"],
-                fields["salary_frequency"],
+                fields["pay_frequency"],
                 fields["rate"],
                 fields["state"],
                 fields["filing_status"],

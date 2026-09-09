@@ -2,13 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-PERIODS_PER_YEAR = {
-    "weekly": 52,
-    "biweekly": 26,
-    "semimonthly": 24,
-    "monthly": 12,
-    "annual": 1,
-}
+from .tax import PERIODS_PER_YEAR, calculate_taxes
 
 
 def _validate_employee(employee: dict[str, Any]) -> None:
@@ -45,9 +39,10 @@ def calculate_payslip(
 
     if pay_type == "hourly":
         gross = round(regular * rate + overtime * rate * 1.5, 2)
+        pay_frequency = employee.get("pay_frequency", employee.get("salary_frequency", "biweekly"))
     else:
-        frequency = employee.get("salary_frequency", "biweekly")
-        periods = PERIODS_PER_YEAR.get(frequency, 26)
+        pay_frequency = employee.get("pay_frequency", employee.get("salary_frequency", "biweekly"))
+        periods = PERIODS_PER_YEAR.get(pay_frequency, 26)
         gross = round(rate / periods, 2)
 
     deductions = deductions or []
@@ -56,23 +51,32 @@ def calculate_payslip(
         2,
     )
 
-    # Tax placeholders for Phase 2.
-    federal_tax = 0.0
-    state_tax = 0.0
-    fica_tax = 0.0
-    medicare_tax = 0.0
+    taxes = calculate_taxes(
+        gross=gross,
+        state=employee.get("state", ""),
+        filing_status=employee.get("filing_status", "single"),
+        pay_frequency=pay_frequency,
+        federal_withholding=employee.get("federal_withholding", 0.0),
+    )
 
-    total_deductions = round(federal_tax + state_tax + fica_tax + medicare_tax + other_deductions, 2)
+    total_deductions = round(
+        taxes["federal_tax"]
+        + taxes["state_tax"]
+        + taxes["fica_tax"]
+        + taxes["medicare_tax"]
+        + other_deductions,
+        2,
+    )
     net_pay = round(gross - total_deductions, 2)
 
     return {
         "regular_hours": regular,
         "overtime_hours": overtime,
         "gross_pay": gross,
-        "federal_tax": federal_tax,
-        "state_tax": state_tax,
-        "fica_tax": fica_tax,
-        "medicare_tax": medicare_tax,
+        "federal_tax": taxes["federal_tax"],
+        "state_tax": taxes["state_tax"],
+        "fica_tax": taxes["fica_tax"],
+        "medicare_tax": taxes["medicare_tax"],
         "other_deductions": other_deductions,
         "net_pay": net_pay,
     }
