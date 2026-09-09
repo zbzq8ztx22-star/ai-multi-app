@@ -11,6 +11,14 @@ from . import assistant, service
 bp = Blueprint("payroll", __name__, url_prefix="/api/payroll")
 
 
+@bp.before_request
+def _require_login() -> Any:
+    """All payroll endpoints require an authenticated session."""
+    from auth import login_required
+
+    return login_required(lambda: None)()
+
+
 def _get_json_body() -> dict[str, Any] | None:
     if not request.is_json:
         return None

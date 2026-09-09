@@ -93,9 +93,12 @@ The backend configuration also includes:
 ```dotenv
 OPENEXECUTIVE_API_URL=http://localhost:8000
 OPENEXECUTIVE_API_KEY=
+SECRET_KEY=change-me-in-production
+DEFAULT_ADMIN_PASSWORD=
 ```
 
 A blank key is only an unconfigured example; it is not a real secret.
+`SECRET_KEY` is required; it signs Flask session cookies. Set `DEFAULT_ADMIN_PASSWORD` to create an `admin` user on startup.
 
 ## Run in development
 

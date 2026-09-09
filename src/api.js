@@ -32,6 +32,12 @@ function getErrorMessage(response, body) {
   if (response.status >= 500) {
     return 'Server error. Please try again later.'
   }
+  if (response.status === 401) {
+    return 'Please log in to continue.'
+  }
+  if (response.status === 403) {
+    return 'You do not have permission to perform this action.'
+  }
   if (response.status === 413) {
     return 'File is too large. Please upload a smaller file.'
   }

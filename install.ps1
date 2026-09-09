@@ -81,6 +81,15 @@ if (Test-Path -LiteralPath $ServerEnv) {
     }
     Copy-Item -LiteralPath $ServerEnvExample -Destination $ServerEnv
     Write-Host "Created server\.env from server\.env.example." -ForegroundColor Green
+
+    $envContent = Get-Content -LiteralPath $ServerEnv -Raw
+    if ($envContent -match 'SECRET_KEY=change-me-in-production') {
+        $chars = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!@#$%^&*()_+-='.ToCharArray()
+        $secret = -join ($chars | Get-Random -Count 32)
+        $envContent = $envContent -replace 'SECRET_KEY=change-me-in-production', "SECRET_KEY=$secret"
+        Set-Content -LiteralPath $ServerEnv -Value $envContent -NoNewline
+        Write-Host "Generated a SECRET_KEY in server\.env." -ForegroundColor Green
+    }
 }
 
 Write-Host ""

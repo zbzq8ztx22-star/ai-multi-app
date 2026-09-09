@@ -22,6 +22,7 @@ BASE_DIR = Path(__file__).resolve().parent
 if str(BASE_DIR) not in sys.path:
     sys.path.insert(0, str(BASE_DIR))
 
+from auth import init_auth
 from payroll import init_app as init_payroll
 
 # Load .env from the server directory, but never let it override env vars that
@@ -55,6 +56,7 @@ def create_app(test_config: dict[str, Any] | None = None) -> Flask:
     app.config["OPENEXECUTIVE_API_KEY"] = os.environ.get("OPENEXECUTIVE_API_KEY", "")
     app.config["OPENEXECUTIVE_TIMEOUT"] = int(os.environ.get("OPENEXECUTIVE_TIMEOUT", "120"))
     app.config["HEALTH_TIMEOUT"] = int(os.environ.get("HEALTH_TIMEOUT", "5"))
+    app.config["SECRET_KEY"] = os.environ.get("SECRET_KEY", "")
 
     if test_config:
         app.config.update(test_config)
@@ -492,6 +494,7 @@ def create_app(test_config: dict[str, Any] | None = None) -> Flask:
             return jsonify({"error": "Internal server error"}), 500
 
     init_payroll(app)
+    init_auth(app)
     return app
 
 

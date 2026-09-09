@@ -2,13 +2,14 @@ import os
 
 import pytest
 
-from app import create_app
-
 # Set test-safe config before app.py is imported so create_app() picks it up.
 os.environ["OPENEXECUTIVE_API_URL"] = "http://openexec.test"
 os.environ["OPENEXECUTIVE_API_KEY"] = "test-key"
 os.environ["FLASK_DEBUG"] = "0"
 os.environ["CORS_ORIGINS"] = "*"
+os.environ["SECRET_KEY"] = "test-secret-key"
+
+from app import create_app
 
 
 @pytest.fixture
@@ -19,4 +20,13 @@ def app(tmp_path):
 
 @pytest.fixture
 def client(app):
-    return app.test_client()
+    with app.test_client() as test_client:
+        test_client.post(
+            "/api/auth/register",
+            json={"username": "testuser", "password": "testpassword", "role": "admin"},
+        )
+        test_client.post(
+            "/api/auth/login",
+            json={"username": "testuser", "password": "testpassword"},
+        )
+        yield test_client
