@@ -604,3 +604,198 @@ def test_ytd_recalculated_on_payslip_update_and_delete(client):
         json={"employee_id": emp["id"], "period_id": period2["id"], "regular_hours": 10},
     ).get_json()
     assert slip2["fica_tax"] == round(1000.0 * 0.062, 2)
+
+
+# --------------------------------------------------------------------------- #
+# Review fixes: tax deductions, tax-year boundaries, ordering, validation
+# --------------------------------------------------------------------------- #
+
+
+def test_tax_deduction_reduces_net_pay(client):
+    emp = client.post(
+        "/api/payroll/employees",
+        json={"name": "Taxed", "pay_type": "hourly", "rate": 20.0},
+    ).get_json()
+    period = _make_period(client, "2026-03-01", "2026-03-14")
+    resp = client.post(
+        "/api/payroll/payslips",
+        json={
+            "employee_id": emp["id"],
+            "period_id": period["id"],
+            "regular_hours": 40,
+            "deductions": [{"name": "Local Tax", "amount": 25.0, "category": "tax"}],
+        },
+    )
+    assert resp.status_code == 201
+    body = resp.get_json()
+    assert body["other_deductions"] == 25.0
+    expected_net = (
+        body["gross_pay"]
+        - body["federal_tax"]
+        - body["state_tax"]
+        - body["fica_tax"]
+        - body["medicare_tax"]
+        - 25.0
+    )
+    assert abs(body["net_pay"] - expected_net) < 0.01
+
+
+def test_december_period_paid_in_january_uses_pay_date_year(client):
+    emp = client.post(
+        "/api/payroll/employees",
+        json={"name": "YearEnd", "pay_type": "hourly", "rate": 20.0},
+    ).get_json()
+    resp = client.post(
+        "/api/payroll/pay-periods",
+        json={
+            "start_date": "2026-12-20",
+            "end_date": "2026-12-31",
+            "pay_date": "2027-01-05",
+        },
+    )
+    assert resp.status_code == 201
+    period = resp.get_json()
+    resp = client.post(
+        "/api/payroll/payslips",
+        json={"employee_id": emp["id"], "period_id": period["id"], "regular_hours": 40},
+    )
+    assert resp.status_code == 201
+
+    import sqlite3
+
+    db_path = client.application.config["PAYROLL_DATABASE"]
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    try:
+        rows = conn.execute(
+            "SELECT year FROM employee_ytd WHERE employee_id = ?", (emp["id"],)
+        ).fetchall()
+    finally:
+        conn.close()
+    years = sorted(r["year"] for r in rows)
+    assert years == [2027]
+
+
+def test_out_of_order_payslips_recompute_taxes(client):
+    emp = client.post(
+        "/api/payroll/employees",
+        json={
+            "name": "High Earner",
+            "pay_type": "salary",
+            "rate": 400000.0,
+            "pay_frequency": "biweekly",
+        },
+    ).get_json()
+
+    base = datetime(2026, 1, 1)
+    periods = []
+    for i in range(12):
+        start = (base + timedelta(days=14 * i)).strftime("%Y-%m-%d")
+        end = (base + timedelta(days=14 * (i + 1) - 1)).strftime("%Y-%m-%d")
+        periods.append(_make_period(client, start, end))
+
+    for period in reversed(periods):
+        resp = client.post(
+            "/api/payroll/payslips",
+            json={"employee_id": emp["id"], "period_id": period["id"]},
+        )
+        assert resp.status_code == 201
+
+    slips = [
+        client.get(f"/api/payroll/payslips?employee_id={emp['id']}&period_id={p['id']}").get_json()[0]
+        for p in periods
+    ]
+    total_fica = sum(s["fica_tax"] for s in slips)
+    expected_max = round(176100.0 * 0.062, 2)
+    assert abs(total_fica - expected_max) < 0.1
+    # The chronologically last paycheck should hit the Social Security cap.
+    assert slips[-1]["fica_tax"] < slips[0]["fica_tax"]
+
+
+@pytest.mark.parametrize("bad_date", ["2026-99-99", "2026-02-30", "2027-02-29"])
+def test_invalid_calendar_dates_rejected(client, bad_date):
+    resp = client.post(
+        "/api/payroll/pay-periods",
+        json={"start_date": "2026-01-01", "end_date": bad_date},
+    )
+    assert resp.status_code == 400
+    assert "error" in resp.get_json()
+
+
+def test_leap_day_accepted(client):
+    resp = client.post(
+        "/api/payroll/pay-periods",
+        json={"start_date": "2028-02-15", "end_date": "2028-02-29"},
+    )
+    assert resp.status_code == 201
+
+
+@pytest.mark.parametrize("deductions", [[None], ["x"]])
+def test_malformed_deduction_items_return_400(client, deductions):
+    emp = client.post(
+        "/api/payroll/employees",
+        json={"name": "Deductions", "pay_type": "hourly", "rate": 20.0},
+    ).get_json()
+    period = _make_period(client, "2026-03-01", "2026-03-14")
+    resp = client.post(
+        "/api/payroll/payslips",
+        json={
+            "employee_id": emp["id"],
+            "period_id": period["id"],
+            "regular_hours": 40,
+            "deductions": deductions,
+        },
+    )
+    assert resp.status_code == 400
+    assert "error" in resp.get_json()
+
+
+# --------------------------------------------------------------------------- #
+# Review fixes: roles and read-only viewers
+# --------------------------------------------------------------------------- #
+
+
+def test_register_cannot_self_assign_admin(app):
+    anon = app.test_client()
+    resp = anon.post(
+        "/api/auth/register",
+        json={"username": "admin", "password": "pw", "role": "admin"},
+    )
+    assert resp.status_code == 201  # bootstrap: first user may be admin
+
+    resp = anon.post(
+        "/api/auth/register",
+        json={"username": "evil", "password": "pw", "role": "admin"},
+    )
+    assert resp.status_code == 403
+
+    resp = anon.post("/api/auth/register", json={"username": "ok", "password": "pw"})
+    assert resp.status_code == 201
+    assert resp.get_json()["role"] == "viewer"
+
+
+def test_viewer_cannot_mutate_payroll(app):
+    client = app.test_client()
+    client.post(
+        "/api/auth/register",
+        json={"username": "admin", "password": "pw", "role": "admin"},
+    )
+    client.post("/api/auth/login", json={"username": "admin", "password": "pw"})
+    resp = client.post(
+        "/api/auth/register",
+        json={"username": "viewer", "password": "pw", "role": "viewer"},
+    )
+    assert resp.status_code == 201
+    client.post("/api/auth/logout")
+
+    client.post("/api/auth/login", json={"username": "viewer", "password": "pw"})
+
+    assert client.get("/api/payroll/employees").status_code == 200
+    resp = client.post(
+        "/api/payroll/employees",
+        json={"name": "Nope", "pay_type": "hourly", "rate": 10.0},
+    )
+    assert resp.status_code == 403
+
+    resp = client.post("/api/payroll/assistant", json={"message": "list employees"})
+    assert resp.status_code != 403

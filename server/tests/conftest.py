@@ -8,6 +8,7 @@ os.environ["OPENEXECUTIVE_API_KEY"] = "test-key"
 os.environ["FLASK_DEBUG"] = "0"
 os.environ["CORS_ORIGINS"] = "*"
 os.environ["SECRET_KEY"] = "test-secret-key"
+os.environ["SESSION_COOKIE_SECURE"] = "0"
 
 from app import create_app
 

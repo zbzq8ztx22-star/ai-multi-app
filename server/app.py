@@ -22,7 +22,7 @@ BASE_DIR = Path(__file__).resolve().parent
 if str(BASE_DIR) not in sys.path:
     sys.path.insert(0, str(BASE_DIR))
 
-from auth import init_auth
+from auth import init_auth, login_required
 from payroll import init_app as init_payroll
 
 # Load .env from the server directory, but never let it override env vars that
@@ -70,7 +70,7 @@ def create_app(test_config: dict[str, Any] | None = None) -> Flask:
         app,
         origins=origins,
         supports_credentials=supports_credentials,
-        methods=["GET", "POST", "OPTIONS"],
+        methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
         allow_headers=["Content-Type"],
     )
 
@@ -246,6 +246,7 @@ def create_app(test_config: dict[str, Any] | None = None) -> Flask:
         return send_from_directory(BASE_DIR.parent / "dist" / "assets", filename)
 
     @app.route("/api/chat", methods=["POST"])
+    @login_required
     def chat() -> Any:
         if not request.is_json:
             return jsonify({"error": "Request body must be JSON"}), 400
@@ -282,6 +283,7 @@ def create_app(test_config: dict[str, Any] | None = None) -> Flask:
             return jsonify({"error": "Internal server error"}), 500
 
     @app.route("/api/vision", methods=["POST"])
+    @login_required
     def vision() -> Any:
         if "image" not in request.files:
             return jsonify({"error": "image file is required"}), 400
@@ -342,6 +344,7 @@ def create_app(test_config: dict[str, Any] | None = None) -> Flask:
             return jsonify({"error": "Internal server error"}), 500
 
     @app.route("/api/code", methods=["POST"])
+    @login_required
     def code() -> Any:
         if not request.is_json:
             return jsonify({"error": "Request body must be JSON"}), 400
@@ -386,6 +389,7 @@ def create_app(test_config: dict[str, Any] | None = None) -> Flask:
             return jsonify({"error": "Internal server error"}), 500
 
     @app.route("/api/docs", methods=["POST"])
+    @login_required
     def docs() -> Any:
         if "document" not in request.files:
             return jsonify({"error": "document file is required"}), 400
