@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from datetime import datetime, timedelta
+
 import pytest
 
 from tests.helpers import MockResponse, _sse_event
@@ -467,3 +469,138 @@ def test_payroll_report_csv(client):
 def test_payroll_report_not_found(client):
     resp = client.get("/api/payroll/reports/999")
     assert resp.status_code == 404
+
+
+# --------------------------------------------------------------------------- #
+# YTD and W-4 accuracy
+# --------------------------------------------------------------------------- #
+
+
+def _make_period(client, start: str, end: str) -> dict:
+    resp = client.post("/api/payroll/pay-periods", json={"start_date": start, "end_date": end})
+    return resp.get_json()
+
+
+def test_ytd_caps_social_security(client):
+    emp = client.post(
+        "/api/payroll/employees",
+        json={"name": "High Earner", "pay_type": "salary", "rate": 400000.0, "pay_frequency": "biweekly"},
+    ).get_json()
+
+    base = datetime(2026, 1, 1)
+    slips = []
+    for i in range(12):
+        start = (base + timedelta(days=14 * i)).strftime("%Y-%m-%d")
+        end = (base + timedelta(days=14 * (i + 1) - 1)).strftime("%Y-%m-%d")
+        period = _make_period(client, start, end)
+        slip = client.post(
+            "/api/payroll/payslips",
+            json={"employee_id": emp["id"], "period_id": period["id"]},
+        ).get_json()
+        slips.append(slip)
+
+    assert slips[0]["fica_tax"] > 0
+    # The last paycheck should hit the Social Security wage base cap.
+    assert slips[-1]["fica_tax"] < slips[0]["fica_tax"]
+    total_fica = sum(s["fica_tax"] for s in slips)
+    expected_max = round(176100.0 * 0.062, 2)
+    assert abs(total_fica - expected_max) < 0.1
+
+
+def test_ytd_triggers_additional_medicare_tax(client):
+    emp = client.post(
+        "/api/payroll/employees",
+        json={"name": "Very High Earner", "pay_type": "salary", "rate": 500000.0, "pay_frequency": "biweekly"},
+    ).get_json()
+
+    base = datetime(2026, 1, 1)
+    slips = []
+    for i in range(12):
+        start = (base + timedelta(days=14 * i)).strftime("%Y-%m-%d")
+        end = (base + timedelta(days=14 * (i + 1) - 1)).strftime("%Y-%m-%d")
+        period = _make_period(client, start, end)
+        slip = client.post(
+            "/api/payroll/payslips",
+            json={"employee_id": emp["id"], "period_id": period["id"]},
+        ).get_json()
+        slips.append(slip)
+
+    base_medicare = slips[0]["medicare_tax"]
+    # By the 11th paycheck the annual gross crosses the $200k threshold.
+    assert slips[10]["medicare_tax"] > base_medicare
+    assert slips[-1]["medicare_tax"] > slips[10]["medicare_tax"]
+
+
+def test_w4_adjustments_reduce_federal_tax(client):
+    period_base = client.post(
+        "/api/payroll/pay-periods",
+        json={"start_date": "2026-01-01", "end_date": "2026-01-31"},
+    ).get_json()
+    period_w4 = client.post(
+        "/api/payroll/pay-periods",
+        json={"start_date": "2026-02-01", "end_date": "2026-02-28"},
+    ).get_json()
+
+    emp_base = client.post(
+        "/api/payroll/employees",
+        json={"name": "Base", "pay_type": "salary", "rate": 60000.0, "pay_frequency": "monthly"},
+    ).get_json()
+    base_slip = client.post(
+        "/api/payroll/payslips",
+        json={"employee_id": emp_base["id"], "period_id": period_base["id"]},
+    ).get_json()
+
+    emp_w4 = client.post(
+        "/api/payroll/employees",
+        json={
+            "name": "W4",
+            "pay_type": "salary",
+            "rate": 60000.0,
+            "pay_frequency": "monthly",
+            "dependents": 2,
+            "other_income": 5000.0,
+            "w4_deductions": 5000.0,
+        },
+    ).get_json()
+    w4_slip = client.post(
+        "/api/payroll/payslips",
+        json={"employee_id": emp_w4["id"], "period_id": period_w4["id"]},
+    ).get_json()
+
+    assert w4_slip["federal_tax"] < base_slip["federal_tax"]
+
+
+def test_ytd_recalculated_on_payslip_update_and_delete(client):
+    emp = client.post(
+        "/api/payroll/employees",
+        json={"name": "YTD Test", "pay_type": "hourly", "rate": 100.0},
+    ).get_json()
+    period = client.post(
+        "/api/payroll/pay-periods",
+        json={"start_date": "2026-01-01", "end_date": "2026-01-14"},
+    ).get_json()
+    slip = client.post(
+        "/api/payroll/payslips",
+        json={"employee_id": emp["id"], "period_id": period["id"], "regular_hours": 10},
+    ).get_json()
+
+    # Update hours; YTD should reflect the new values.
+    updated = client.put(
+        f"/api/payroll/payslips/{slip['id']}",
+        json={"regular_hours": 20},
+    ).get_json()
+    assert updated["gross_pay"] == 2000.0
+    assert updated["fica_tax"] == round(2000.0 * 0.062, 2)
+
+    # Delete the only payslip; YTD should go back to zero for the year.
+    client.delete(f"/api/payroll/payslips/{slip['id']}")
+    # A new payslip in the same year should compute taxes with zero YTD.
+    period2 = client.post(
+        "/api/payroll/pay-periods",
+        json={"start_date": "2026-01-15", "end_date": "2026-01-28"},
+    ).get_json()
+    slip2 = client.post(
+        "/api/payroll/payslips",
+        json={"employee_id": emp["id"], "period_id": period2["id"], "regular_hours": 10},
+    ).get_json()
+    assert slip2["fica_tax"] == round(1000.0 * 0.062, 2)

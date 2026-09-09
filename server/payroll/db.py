@@ -21,6 +21,10 @@ CREATE TABLE IF NOT EXISTS employees (
     state TEXT NOT NULL DEFAULT '',
     filing_status TEXT NOT NULL DEFAULT 'single' CHECK(filing_status IN ('single', 'married', 'hoh')),
     federal_withholding REAL NOT NULL DEFAULT 0 CHECK(federal_withholding >= 0),
+    dependents INTEGER NOT NULL DEFAULT 0 CHECK(dependents >= 0),
+    other_income REAL NOT NULL DEFAULT 0 CHECK(other_income >= 0),
+    w4_deductions REAL NOT NULL DEFAULT 0 CHECK(w4_deductions >= 0),
+    multiple_jobs INTEGER NOT NULL DEFAULT 0 CHECK(multiple_jobs IN (0, 1)),
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
 );
@@ -45,6 +49,8 @@ CREATE TABLE IF NOT EXISTS payslips (
     state_tax REAL NOT NULL DEFAULT 0,
     fica_tax REAL NOT NULL DEFAULT 0,
     medicare_tax REAL NOT NULL DEFAULT 0,
+    fica_wages REAL NOT NULL DEFAULT 0,
+    medicare_wages REAL NOT NULL DEFAULT 0,
     other_deductions REAL NOT NULL DEFAULT 0,
     net_pay REAL NOT NULL DEFAULT 0,
     created_at TEXT NOT NULL,
@@ -66,6 +72,26 @@ CREATE TABLE IF NOT EXISTS payslip_deductions (
 
 CREATE INDEX IF NOT EXISTS idx_payslips_period ON payslips(period_id);
 CREATE INDEX IF NOT EXISTS idx_payslips_employee ON payslips(employee_id);
+
+CREATE TABLE IF NOT EXISTS employee_ytd (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    employee_id INTEGER NOT NULL,
+    year INTEGER NOT NULL,
+    gross_wages REAL NOT NULL DEFAULT 0 CHECK(gross_wages >= 0),
+    fica_wages REAL NOT NULL DEFAULT 0 CHECK(fica_wages >= 0),
+    medicare_wages REAL NOT NULL DEFAULT 0 CHECK(medicare_wages >= 0),
+    federal_tax REAL NOT NULL DEFAULT 0 CHECK(federal_tax >= 0),
+    state_tax REAL NOT NULL DEFAULT 0 CHECK(state_tax >= 0),
+    fica_tax REAL NOT NULL DEFAULT 0 CHECK(fica_tax >= 0),
+    medicare_tax REAL NOT NULL DEFAULT 0 CHECK(medicare_tax >= 0),
+    other_deductions REAL NOT NULL DEFAULT 0 CHECK(other_deductions >= 0),
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    UNIQUE(employee_id, year),
+    FOREIGN KEY (employee_id) REFERENCES employees(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_employee_ytd_year ON employee_ytd(employee_id, year);
 """
 
 

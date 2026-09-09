@@ -19,6 +19,10 @@ const EMPTY_EMPLOYEE = {
   state: '',
   filing_status: 'single',
   federal_withholding: '',
+  dependents: '',
+  other_income: '',
+  w4_deductions: '',
+  multiple_jobs: false,
 }
 
 const EMPTY_PERIOD = {
@@ -138,6 +142,10 @@ export default function Payroll() {
         ...employeeForm,
         rate: parseFloat(employeeForm.rate),
         federal_withholding: parseFloat(employeeForm.federal_withholding || 0),
+        dependents: parseInt(employeeForm.dependents || 0, 10),
+        other_income: parseFloat(employeeForm.other_income || 0),
+        w4_deductions: parseFloat(employeeForm.w4_deductions || 0),
+        multiple_jobs: employeeForm.multiple_jobs,
       })
       setEmployeeForm(EMPTY_EMPLOYEE)
       await refreshData()
@@ -378,6 +386,52 @@ export default function Payroll() {
               className="w-full input-field"
               placeholder="Per paycheck amount"
             />
+          </div>
+          <div>
+            <label className="block text-sm font-medium mb-1">Dependents</label>
+            <input
+              type="number"
+              min="0"
+              step="1"
+              value={employeeForm.dependents}
+              onChange={e => setEmployeeForm({ ...employeeForm, dependents: e.target.value })}
+              className="w-full input-field"
+              placeholder="Number of dependents"
+            />
+          </div>
+          <div>
+            <label className="block text-sm font-medium mb-1">Other Income (annual)</label>
+            <input
+              type="number"
+              step="0.01"
+              min="0"
+              value={employeeForm.other_income}
+              onChange={e => setEmployeeForm({ ...employeeForm, other_income: e.target.value })}
+              className="w-full input-field"
+              placeholder="Annual other income"
+            />
+          </div>
+          <div>
+            <label className="block text-sm font-medium mb-1">W-4 Deductions</label>
+            <input
+              type="number"
+              step="0.01"
+              min="0"
+              value={employeeForm.w4_deductions}
+              onChange={e => setEmployeeForm({ ...employeeForm, w4_deductions: e.target.value })}
+              className="w-full input-field"
+              placeholder="Annual deductions"
+            />
+          </div>
+          <div className="flex items-center gap-2 md:col-span-2">
+            <input
+              id="multiple-jobs"
+              type="checkbox"
+              checked={employeeForm.multiple_jobs}
+              onChange={e => setEmployeeForm({ ...employeeForm, multiple_jobs: e.target.checked })}
+              className="h-4 w-4 rounded border-gray-600 bg-gray-700 text-primary-600 focus:ring-primary-500"
+            />
+            <label htmlFor="multiple-jobs" className="text-sm font-medium">Multiple jobs (W-4 Step 2c)</label>
           </div>
         </div>
         <button type="submit" className="btn-primary flex items-center gap-2">

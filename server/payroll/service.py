@@ -62,6 +62,26 @@ def _validate_non_negative(value: Any, field: str) -> float:
     return num
 
 
+def _validate_non_negative_int(value: Any, field: str) -> int:
+    try:
+        num = int(value)
+    except (TypeError, ValueError):
+        raise ValueError(f"{field} must be an integer")
+    if num < 0:
+        raise ValueError(f"{field} cannot be negative")
+    return num
+
+
+def _validate_bool(value: Any, field: str) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        return value.lower() in ("true", "1", "yes")
+    if isinstance(value, int):
+        return bool(value)
+    raise ValueError(f"{field} must be a boolean")
+
+
 def _employee_defaults(data: dict[str, Any]) -> dict[str, Any]:
     return {
         "name": _validate_name(data.get("name")),
@@ -81,6 +101,10 @@ def _employee_defaults(data: dict[str, Any]) -> dict[str, Any]:
         "federal_withholding": _validate_non_negative(
             data.get("federal_withholding", 0), "federal_withholding"
         ),
+        "dependents": _validate_non_negative_int(data.get("dependents", 0), "dependents"),
+        "other_income": _validate_non_negative(data.get("other_income", 0), "other_income"),
+        "w4_deductions": _validate_non_negative(data.get("w4_deductions", 0), "w4_deductions"),
+        "multiple_jobs": _validate_bool(data.get("multiple_jobs", False), "multiple_jobs"),
     }
 
 
@@ -125,9 +149,9 @@ def create_employee(data: dict[str, Any]) -> dict[str, Any]:
         cursor = conn.execute(
             """
             INSERT INTO employees
-                (name, position, pay_type, pay_frequency, rate, state, filing_status, federal_withholding, created_at, updated_at)
+                (name, position, pay_type, pay_frequency, rate, state, filing_status, federal_withholding, dependents, other_income, w4_deductions, multiple_jobs, created_at, updated_at)
             VALUES
-                (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 fields["name"],
@@ -138,6 +162,10 @@ def create_employee(data: dict[str, Any]) -> dict[str, Any]:
                 fields["state"],
                 fields["filing_status"],
                 fields["federal_withholding"],
+                fields["dependents"],
+                fields["other_income"],
+                fields["w4_deductions"],
+                int(fields["multiple_jobs"]),
                 now,
                 now,
             ),
@@ -168,7 +196,8 @@ def update_employee(employee_id: int, data: dict[str, Any]) -> dict[str, Any]:
             """
             UPDATE employees
             SET name = ?, position = ?, pay_type = ?, pay_frequency = ?,
-                rate = ?, state = ?, filing_status = ?, federal_withholding = ?, updated_at = ?
+                rate = ?, state = ?, filing_status = ?, federal_withholding = ?,
+                dependents = ?, other_income = ?, w4_deductions = ?, multiple_jobs = ?, updated_at = ?
             WHERE id = ?
             """,
             (
@@ -180,6 +209,10 @@ def update_employee(employee_id: int, data: dict[str, Any]) -> dict[str, Any]:
                 fields["state"],
                 fields["filing_status"],
                 fields["federal_withholding"],
+                fields["dependents"],
+                fields["other_income"],
+                fields["w4_deductions"],
+                int(fields["multiple_jobs"]),
                 now,
                 employee_id,
             ),
@@ -289,8 +322,115 @@ def _fetch_deductions(conn: Any, payslip_id: int) -> list[dict[str, Any]]:
     return [row_to_dict(row) for row in rows]
 
 
+def _get_employee_conn(conn: Any, employee_id: int) -> dict[str, Any] | None:
+    row = conn.execute("SELECT * FROM employees WHERE id = ?", (employee_id,)).fetchone()
+    return row_to_dict(row) if row else None
+
+
+def _get_pay_period_conn(conn: Any, period_id: int) -> dict[str, Any] | None:
+    row = conn.execute("SELECT * FROM pay_periods WHERE id = ?", (period_id,)).fetchone()
+    return row_to_dict(row) if row else None
+
+
+def _payslip_year(period: dict[str, Any]) -> int:
+    return int(period["start_date"].split("-")[0])
+
+
+def _get_employee_ytd_conn(conn: Any, employee_id: int, year: int) -> dict[str, Any]:
+    row = conn.execute(
+        "SELECT * FROM employee_ytd WHERE employee_id = ? AND year = ?",
+        (employee_id, year),
+    ).fetchone()
+    if row is None:
+        return {
+            "gross_wages": 0.0,
+            "fica_wages": 0.0,
+            "medicare_wages": 0.0,
+            "federal_tax": 0.0,
+            "state_tax": 0.0,
+            "fica_tax": 0.0,
+            "medicare_tax": 0.0,
+            "other_deductions": 0.0,
+        }
+    return row_to_dict(row)
+
+
+def _ytd_for_payslip_calculation(
+    conn: Any, employee_id: int, year: int, exclude_payslip_id: int | None = None
+) -> dict[str, Any]:
+    """Return YTD totals just before a given payslip.
+
+    If ``exclude_payslip_id`` is provided, subtract that payslip's wage
+    contributions so the tax engine sees the YTD as it was before the slip.
+    """
+    ytd = _get_employee_ytd_conn(conn, employee_id, year)
+    if exclude_payslip_id is None:
+        return ytd
+
+    slip = conn.execute(
+        "SELECT fica_wages, medicare_wages FROM payslips WHERE id = ? AND employee_id = ?",
+        (exclude_payslip_id, employee_id),
+    ).fetchone()
+    if slip is None:
+        return ytd
+
+    return {
+        "fica_wages": max(0.0, ytd["fica_wages"] - (slip["fica_wages"] or 0)),
+        "medicare_wages": max(0.0, ytd["medicare_wages"] - (slip["medicare_wages"] or 0)),
+    }
+
+
+def _recalculate_employee_ytd(conn: Any, employee_id: int, year: int) -> None:
+    """Recompute an employee's YTD for a year from all stored payslips.
+
+    This is called after any payslip mutation so YTD always matches actual data.
+    """
+    conn.execute("DELETE FROM employee_ytd WHERE employee_id = ? AND year = ?", (employee_id, year))
+    row = conn.execute(
+        """
+        SELECT
+            COALESCE(SUM(gross_pay), 0) as gross_wages,
+            COALESCE(SUM(federal_tax), 0) as federal_tax,
+            COALESCE(SUM(state_tax), 0) as state_tax,
+            COALESCE(SUM(fica_tax), 0) as fica_tax,
+            COALESCE(SUM(medicare_tax), 0) as medicare_tax,
+            COALESCE(SUM(other_deductions), 0) as other_deductions,
+            COALESCE(SUM(fica_wages), 0) as fica_wages,
+            COALESCE(SUM(medicare_wages), 0) as medicare_wages
+        FROM payslips
+        JOIN pay_periods ON payslips.period_id = pay_periods.id
+        WHERE payslips.employee_id = ? AND strftime('%Y', pay_periods.start_date) = ?
+        """,
+        (employee_id, str(year)),
+    ).fetchone()
+
+    now = now_utc()
+    conn.execute(
+        """
+        INSERT INTO employee_ytd
+            (employee_id, year, gross_wages, federal_tax, state_tax, fica_tax,
+             medicare_tax, other_deductions, fica_wages, medicare_wages, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            employee_id,
+            year,
+            row["gross_wages"],
+            row["federal_tax"],
+            row["state_tax"],
+            row["fica_tax"],
+            row["medicare_tax"],
+            row["other_deductions"],
+            row["fica_wages"],
+            row["medicare_wages"],
+            now,
+            now,
+        ),
+    )
+
+
 def _build_payslip_values(
-    employee: dict[str, Any], data: dict[str, Any]
+    employee: dict[str, Any], data: dict[str, Any], ytd: dict[str, Any] | None = None
 ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
     regular_hours = _validate_non_negative(data.get("regular_hours", 0), "regular_hours")
     overtime_hours = _validate_non_negative(data.get("overtime_hours", 0), "overtime_hours")
@@ -298,29 +438,33 @@ def _build_payslip_values(
     if not isinstance(raw_deductions, list):
         raise ValueError("deductions must be a list")
     deductions = [_deduction_defaults(d) for d in raw_deductions]
-    calc = calculate_payslip(employee, regular_hours, overtime_hours, deductions)
+    calc = calculate_payslip(employee, regular_hours, overtime_hours, deductions, ytd)
     return calc, deductions
 
 
 def create_payslip(employee_id: int, period_id: int, data: dict[str, Any]) -> dict[str, Any]:
-    employee = get_employee(employee_id)
-    if employee is None:
-        raise ValueError("Employee not found")
-    period = get_pay_period(period_id)
-    if period is None:
-        raise ValueError("Pay period not found")
-
-    calc, deductions = _build_payslip_values(employee, data)
     now = now_utc()
 
     with get_db() as conn:
+        employee = _get_employee_conn(conn, employee_id)
+        if employee is None:
+            raise ValueError("Employee not found")
+        period = _get_pay_period_conn(conn, period_id)
+        if period is None:
+            raise ValueError("Pay period not found")
+
+        year = _payslip_year(period)
+        ytd = _ytd_for_payslip_calculation(conn, employee_id, year)
+        calc, deductions = _build_payslip_values(employee, data, ytd)
+
         try:
             cursor = conn.execute(
                 """
                 INSERT INTO payslips
                     (employee_id, period_id, regular_hours, overtime_hours, gross_pay, federal_tax,
-                     state_tax, fica_tax, medicare_tax, other_deductions, net_pay, created_at, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                     state_tax, fica_tax, medicare_tax, fica_wages, medicare_wages,
+                     other_deductions, net_pay, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     employee_id,
@@ -332,6 +476,8 @@ def create_payslip(employee_id: int, period_id: int, data: dict[str, Any]) -> di
                     calc["state_tax"],
                     calc["fica_tax"],
                     calc["medicare_tax"],
+                    calc["fica_wages"],
+                    calc["medicare_wages"],
                     calc["other_deductions"],
                     calc["net_pay"],
                     now,
@@ -349,6 +495,7 @@ def create_payslip(employee_id: int, period_id: int, data: dict[str, Any]) -> di
                 """,
                 (payslip_id, deduction["name"], deduction["amount"], deduction["category"], now),
             )
+        _recalculate_employee_ytd(conn, employee_id, year)
         conn.commit()
         return _get_payslip_with_deductions(conn, payslip_id)
 
@@ -385,21 +532,29 @@ def list_payslips(employee_id: int | None = None, period_id: int | None = None) 
 
 
 def update_payslip(payslip_id: int, data: dict[str, Any]) -> dict[str, Any]:
+    now = now_utc()
+
     with get_db() as conn:
         row = conn.execute("SELECT * FROM payslips WHERE id = ?", (payslip_id,)).fetchone()
         if row is None:
             raise ValueError("Payslip not found")
-        employee = get_employee(row["employee_id"])
+        employee = _get_employee_conn(conn, row["employee_id"])
         if employee is None:
             raise ValueError("Employee not found")
+        period = _get_pay_period_conn(conn, row["period_id"])
+        if period is None:
+            raise ValueError("Pay period not found")
 
-        calc, deductions = _build_payslip_values(employee, data)
-        now = now_utc()
+        year = _payslip_year(period)
+        ytd = _ytd_for_payslip_calculation(conn, row["employee_id"], year, exclude_payslip_id=payslip_id)
+        calc, deductions = _build_payslip_values(employee, data, ytd)
+
         conn.execute(
             """
             UPDATE payslips
             SET regular_hours = ?, overtime_hours = ?, gross_pay = ?, federal_tax = ?,
-                state_tax = ?, fica_tax = ?, medicare_tax = ?, other_deductions = ?, net_pay = ?, updated_at = ?
+                state_tax = ?, fica_tax = ?, medicare_tax = ?, fica_wages = ?, medicare_wages = ?,
+                other_deductions = ?, net_pay = ?, updated_at = ?
             WHERE id = ?
             """,
             (
@@ -410,6 +565,8 @@ def update_payslip(payslip_id: int, data: dict[str, Any]) -> dict[str, Any]:
                 calc["state_tax"],
                 calc["fica_tax"],
                 calc["medicare_tax"],
+                calc["fica_wages"],
+                calc["medicare_wages"],
                 calc["other_deductions"],
                 calc["net_pay"],
                 now,
@@ -425,13 +582,25 @@ def update_payslip(payslip_id: int, data: dict[str, Any]) -> dict[str, Any]:
                 """,
                 (payslip_id, deduction["name"], deduction["amount"], deduction["category"], now),
             )
+        _recalculate_employee_ytd(conn, row["employee_id"], year)
         conn.commit()
         return _get_payslip_with_deductions(conn, payslip_id)
 
 
 def delete_payslip(payslip_id: int) -> bool:
     with get_db() as conn:
+        row = conn.execute(
+            "SELECT employee_id, period_id FROM payslips WHERE id = ?", (payslip_id,)
+        ).fetchone()
+        if row is None:
+            return False
+        period = _get_pay_period_conn(conn, row["period_id"])
+        if period is None:
+            return False
+        year = _payslip_year(period)
+
         cursor = conn.execute("DELETE FROM payslips WHERE id = ?", (payslip_id,))
+        _recalculate_employee_ytd(conn, row["employee_id"], year)
         conn.commit()
         return cursor.rowcount > 0
 

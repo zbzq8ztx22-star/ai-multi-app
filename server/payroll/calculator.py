@@ -21,12 +21,9 @@ def calculate_payslip(
     regular_hours: float = 0.0,
     overtime_hours: float = 0.0,
     deductions: list[dict[str, Any]] | None = None,
+    ytd: dict[str, Any] | None = None,
 ) -> dict[str, float]:
-    """Compute gross pay, deductions and net pay.
-
-    Federal/state/FICA/Medicare taxes are placeholders in this phase; they
-    will be implemented once the tax tables are integrated.
-    """
+    """Compute gross pay, tax withholdings, deductions and net pay."""
     _validate_employee(employee)
 
     regular = float(regular_hours)
@@ -57,6 +54,11 @@ def calculate_payslip(
         filing_status=employee.get("filing_status", "single"),
         pay_frequency=pay_frequency,
         federal_withholding=employee.get("federal_withholding", 0.0),
+        other_income=employee.get("other_income", 0.0),
+        w4_deductions=employee.get("w4_deductions", 0.0),
+        dependents=employee.get("dependents", 0),
+        multiple_jobs=bool(employee.get("multiple_jobs", False)),
+        ytd=ytd,
     )
 
     total_deductions = round(
@@ -77,6 +79,8 @@ def calculate_payslip(
         "state_tax": taxes["state_tax"],
         "fica_tax": taxes["fica_tax"],
         "medicare_tax": taxes["medicare_tax"],
+        "fica_wages": taxes["fica_wages"],
+        "medicare_wages": taxes["medicare_wages"],
         "other_deductions": other_deductions,
         "net_pay": net_pay,
     }
