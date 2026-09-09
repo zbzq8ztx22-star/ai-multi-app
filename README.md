@@ -1,212 +1,179 @@
 # AI Multi-App
 
-A comprehensive multi-purpose AI application with chat, vision, code generation, and document analysis capabilities, powered by OpenExecutive API.
+AI Multi-App provides real chat, vision, code generation, and document analysis through a Flask bridge to OpenExecutive, with a Vite frontend.
 
-## Features
+## Status
 
-- **AI Chat**: Conversational AI interface powered by OpenExecutive's advanced AI agents
-- **Vision**: Image analysis and understanding using AI vision models
-- **Code Generation**: Generate code in multiple programming languages based on natural language descriptions
-- **Document Analysis**: Upload and analyze documents for insights and summaries
+The chat, vision, code, and document flows have been stabilized for real OpenExecutive-backed responses:
 
-## Tech Stack
+- **Chat** sends conversational requests to OpenExecutive.
+- **Vision** submits uploaded images for model analysis.
+- **Code** generates code from a language and natural-language request.
+- **Documents** extracts supported uploads and requests analysis or summaries.
 
-### Frontend
-- Vanilla HTML5
-- CSS3
-- JavaScript (ES6+)
-- No build tools required
+Payroll is the next planned feature. It is **not implemented yet**.
 
-### Backend
-- Flask (Python)
-- Flask-CORS
-- Pillow (image processing)
-- Requests (HTTP client)
-- **OpenExecutive API** - Advanced AI executive system with multiple specialist agents
+## Repository layout
 
-## Quick Start (Windows)
+The repositories must be sibling directories under the same `GitHub` directory:
 
-### Automated Installation
+```text
+GitHub\
+├── ai-multi-app\
+└── OpenExecutive\
+    └── packages\
+        └── core\
+```
 
-Run the installation script:
+From the AI Multi-App root, OpenExecutive core is therefore `..\OpenExecutive\packages\core`.
+
+## Prerequisites
+
+- Python 3.11+
+- Node.js and npm
+- PowerShell
+- The OpenExecutive repository in the sibling layout above
+- Provider credentials required by OpenExecutive
+
+Keep all real credentials and shared secrets in local `.env` files. Do not commit them.
+
+## Windows installation
+
+From any PowerShell working directory, invoke the installer by its path. From the AI Multi-App root:
 
 ```powershell
 .\install.ps1
 ```
 
-This will:
-- Install Python dependencies
-- Set up OpenExecutive with all required libraries
-- Create configuration files
-- Install timezone libraries
+The installer resolves paths from its own `$PSScriptRoot`, not from the shell's current directory. It:
 
-### Manual Installation
+- creates an isolated `.venv` and installs the Flask development requirements;
+- runs `uv sync` in `..\OpenExecutive\packages\core`;
+- installs locked frontend dependencies with `npm.cmd ci`;
+- copies `server\.env.example` to `server\.env` only when `server\.env` is absent; and
+- never creates or overwrites an OpenExecutive `.env` or writes a placeholder credential.
 
-#### Prerequisites
-- Python 3.11+ (download from https://www.python.org/)
-- PowerShell (included with Windows)
+Existing `.env` files are left unchanged.
 
-#### Step 1: Install Dependencies
+## Manual setup
+
+Run these commands from the `ai-multi-app` root:
 
 ```powershell
-# Install uv package manager
-python -m pip install uv
+python -m venv .venv
+.\.venv\Scripts\python.exe -m pip install uv
+.\.venv\Scripts\python.exe -m pip install -r .\server\requirements-dev.txt
 
-# Install AI Multi-App dependencies
-cd server
-python -m pip install -r requirements.txt
-cd ..
+Push-Location ..\OpenExecutive\packages\core
+..\..\..\ai-multi-app\.venv\Scripts\python.exe -m uv sync
+Pop-Location
 
-# Install OpenExecutive dependencies
-cd OpenExecutive\packages\core
-python -m uv sync
-.venv\Scripts\python.exe -m pip install pytz tzdata
-cd ..\..\..
+npm.cmd ci
+
+if (-not (Test-Path .\server\.env)) {
+    Copy-Item .\server\.env.example .\server\.env
+}
 ```
 
-#### Step 2: Configure OpenExecutive
+Configure OpenExecutive according to its own documentation and provider requirements. Do not use example text as a real credential.
 
-Create `OpenExecutive\.env`:
+### Shared-secret configuration
+
+The Flask bridge sends `OPENEXECUTIVE_API_KEY` to OpenExecutive. OpenExecutive validates that value against its `BACKEND_SHARED_SECRET`; these two variables are different names for the same shared secret on opposite sides of the connection:
+
+```text
+OpenExecutive:  BACKEND_SHARED_SECRET=<one private generated value>
+ai-multi-app:   OPENEXECUTIVE_API_KEY=<the exact same value>
 ```
-ANTHROPIC_API_KEY=sk-ant-your-key-here
-EXEC_EMAIL_ADDRESS=exec@example.com
-```
 
-Get your Anthropic API key from: https://console.anthropic.com/
+Set `BACKEND_SHARED_SECRET` in the environment file used by OpenExecutive core. Set the matching value in `ai-multi-app\server\.env`. Generate a strong private value locally, never paste it into documentation, and never commit either `.env` file.
 
-#### Step 3: Configure AI Multi-App
+The backend configuration also includes:
 
-Create `server\.env`:
-```
+```dotenv
 OPENEXECUTIVE_API_URL=http://localhost:8000
 OPENEXECUTIVE_API_KEY=
 ```
 
-## Running the Application
+A blank key is only an unconfigured example; it is not a real secret.
 
-### Start OpenExecutive (Required for AI features)
+## Run in development
 
-Open a terminal and run:
+Development uses three separate long-running processes. Open three PowerShell terminals.
 
-```powershell
-cd OpenExecutive\packages\core
-.venv\Scripts\python.exe -m uvicorn openexecutive.api.main:app --reload --port 8000
-```
+### 1. OpenExecutive — port 8000
 
-OpenExecutive will run on `http://localhost:8000`
-
-### Start AI Multi-App
-
-Open a new terminal and run:
+From `ai-multi-app`:
 
 ```powershell
-cd server
-python app.py
+Set-Location ..\OpenExecutive\packages\core
+.\.venv\Scripts\python.exe -m uvicorn openexecutive.api.main:app --reload --port 8000
 ```
 
-The application will run on `http://localhost:5000`
+### 2. Flask API — port 5000
 
-Open your browser and navigate to: http://localhost:5000
+From `ai-multi-app`:
+
+```powershell
+Set-Location .\server
+& ..\.venv\Scripts\python.exe app.py
+```
+
+### 3. Vite frontend — port 3000
+
+From `ai-multi-app`:
+
+```powershell
+npm.cmd run dev
+```
+
+Open `http://localhost:3000`. Vite serves the frontend, Flask serves the application API on `http://localhost:5000`, and Flask calls OpenExecutive on `http://localhost:8000`.
 
 ## Usage
 
 ### Chat
-- Navigate to the Chat tab
-- Type your message and press Enter or click Send
-- The AI will respond using OpenExecutive's advanced AI agents
+
+Enter a message and send it to receive a real OpenExecutive-backed response.
 
 ### Vision
-- Navigate to the Vision tab
-- Upload an image by dragging and dropping or clicking to browse
-- Click "Analyze Image" to get AI-powered analysis
 
-### Code Generation
-- Navigate to the Code tab
-- Select your programming language
-- Describe the code you need
-- Click "Generate Code" to get the generated code
+Upload an image and request analysis. Supported image data is forwarded through the backend to the model flow.
 
-### Document Analysis
-- Navigate to the Documents tab
-- Upload a document (PDF, DOC, DOCX, TXT, MD)
-- Click "Analyze Document" to get insights
+### Code generation
 
-## Architecture
+Choose a language, describe the desired result, and generate code through OpenExecutive.
 
-### OpenExecutive Integration
+### Document analysis
 
-The application integrates with OpenExecutive, a complex AI executive system featuring:
+Upload a supported document and request analysis or a summary. Uploads are limited to 16 MB and are handled by the Flask backend.
 
-- **Multiple Specialist Agents**: Different AI agents for various tasks
-- **Episodic Memory**: Context-aware conversation history
-- **Knowledge Base**: Built-in knowledge chunks (194 included)
-- **Skills System**: 15 built-in skills for various tasks
-- **ChromaDB**: Vector store for knowledge retrieval
-- **Anthropic Claude Models**: Advanced language models
+## API endpoints
 
-### API Flow
-
-```
-User → AI Multi-App (Flask) → OpenExecutive API → Anthropic Claude
-```
-
-## API Endpoints
-
-### POST /api/chat
-Handle chat requests using OpenExecutive API
-
-### POST /api/vision
-Handle image analysis requests
-
-### POST /api/code
-Handle code generation requests
-
-### POST /api/docs
-Handle document analysis requests
-
-### GET /api/health
-Health check endpoint (returns OpenExecutive connection status)
-
-## Configuration
-
-### OpenExecutive Environment Variables
-
-Edit `OpenExecutive/.env`:
-
-- `ANTHROPIC_API_KEY`: Required for AI responses (get from https://console.anthropic.com/)
-- `EXEC_EMAIL_ADDRESS`: Email address for the executive
-- `USER_TIMEZONE`: Timezone (optional, defaults to system timezone)
-
-### AI Multi-App Environment Variables
-
-Edit `server/.env`:
-
-- `OPENEXECUTIVE_API_URL`: OpenExecutive API URL (default: http://localhost:8000)
-- `OPENEXECUTIVE_API_KEY`: Optional API key if OpenExecutive requires authentication
+- `POST /api/chat` — chat requests
+- `POST /api/vision` — image analysis
+- `POST /api/code` — code generation
+- `POST /api/docs` — document analysis
+- `GET /api/health` — backend and OpenExecutive connection status
 
 ## Troubleshooting
 
-### OpenExecutive won't start
-- Ensure Python 3.11+ is installed
-- Check that all dependencies are installed with `uv sync`
-- Verify timezone libraries are installed (`pytz`, `tzdata`)
+### OpenExecutive is unavailable
 
-### AI responses show errors
-- Verify OpenExecutive is running on port 8000
-- Check that `ANTHROPIC_API_KEY` is set in `OpenExecutive/.env`
-- Ensure the API key is valid and active
+- Confirm the sibling core path is `..\OpenExecutive\packages\core`.
+- Confirm OpenExecutive is listening on port 8000.
+- Confirm its provider credentials are configured locally.
+- Confirm `BACKEND_SHARED_SECRET` exactly matches `OPENEXECUTIVE_API_KEY` in `server\.env`.
 
-### Connection refused errors
-- Make sure OpenExecutive is started before AI Multi-App
-- Check that port 8000 is not in use by another application
-- Verify firewall settings allow localhost connections
+### Flask cannot connect
 
-## Notes
+- Start OpenExecutive before making AI requests.
+- Confirm `OPENEXECUTIVE_API_URL=http://localhost:8000` in `server\.env`.
+- Confirm Flask is running on port 5000.
 
-- File uploads are limited to 16MB
-- Uploaded files are stored in the `server/uploads` directory
-- The application works in demo mode without OpenExecutive, but AI features require it
-- OpenExecutive requires a valid Anthropic API key for real AI responses
+### The browser cannot load the app
+
+- Confirm Vite is running on port 3000.
+- Open `http://localhost:3000`, not the Flask port.
 
 ## License
 

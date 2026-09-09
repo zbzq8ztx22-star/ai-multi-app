@@ -25,12 +25,14 @@ function App() {
           <button
             onClick={() => setSidebarOpen(!sidebarOpen)}
             className="p-2 hover:bg-gray-700 rounded-lg transition-colors"
+            aria-label={sidebarOpen ? 'Collapse sidebar' : 'Expand sidebar'}
+            title={sidebarOpen ? 'Collapse sidebar' : 'Expand sidebar'}
           >
-            {sidebarOpen ? <X size={20} /> : <Menu size={20} />}
+            {sidebarOpen ? <X size={20} aria-hidden="true" /> : <Menu size={20} aria-hidden="true" />}
           </button>
         </div>
         
-        <nav className="p-4 space-y-2">
+        <nav className="p-4 space-y-2" role="tablist" aria-label="Application sections">
           {tabs.map((tab) => {
             const Icon = tab.icon
             return (
@@ -42,8 +44,14 @@ function App() {
                     ? 'bg-primary-600 text-white'
                     : 'hover:bg-gray-700 text-gray-300'
                 }`}
+                id={`${tab.id}-tab`}
+                role="tab"
+                aria-label={tab.name}
+                aria-selected={activeTab === tab.id}
+                aria-controls={`${tab.id}-panel`}
+                title={tab.name}
               >
-                <Icon size={20} />
+                <Icon size={20} aria-hidden="true" />
                 {sidebarOpen && <span>{tab.name}</span>}
               </button>
             )
@@ -52,7 +60,12 @@ function App() {
       </aside>
 
       {/* Main Content */}
-      <main className="flex-1 overflow-hidden">
+      <main
+        id={`${activeTab}-panel`}
+        role="tabpanel"
+        aria-labelledby={`${activeTab}-tab`}
+        className="flex-1 overflow-hidden"
+      >
         {activeTab === 'chat' && <Chat />}
         {activeTab === 'vision' && <Vision />}
         {activeTab === 'code' && <CodeGen />}
