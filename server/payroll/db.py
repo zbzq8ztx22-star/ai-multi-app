@@ -309,6 +309,22 @@ CREATE TABLE IF NOT EXISTS budgets (
 );
 
 CREATE INDEX IF NOT EXISTS idx_budgets_business_year ON budgets(business_id, fiscal_year);
+
+CREATE TABLE IF NOT EXISTS audit_log (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER,
+    username TEXT NOT NULL DEFAULT '',
+    action TEXT NOT NULL,
+    module TEXT NOT NULL,
+    entity_type TEXT NOT NULL DEFAULT '',
+    entity_id INTEGER,
+    description TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL,
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE SET NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_audit_log_created ON audit_log(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_audit_log_module ON audit_log(module);
 """
 
 

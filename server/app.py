@@ -23,6 +23,7 @@ if str(BASE_DIR) not in sys.path:
     sys.path.insert(0, str(BASE_DIR))
 
 from accounting import init_app as init_accounting
+from audit import init_app as init_audit
 from auth import init_auth, login_required
 from dashboard import init_app as init_dashboard
 from entities import init_app as init_entities
@@ -506,6 +507,7 @@ def create_app(test_config: dict[str, Any] | None = None) -> Flask:
     init_tax(app)
     init_accounting(app)
     init_dashboard(app)
+    init_audit(app)
     return app
 
 

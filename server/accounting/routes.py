@@ -1,19 +1,28 @@
 from typing import Any, Callable
 
-from flask import Blueprint, jsonify, request
+from flask import Blueprint, jsonify, request, session
 
+from audit import service as audit_service
 from auth import admin_required, login_required
 from . import service
 
 bp = Blueprint("accounting", __name__, url_prefix="/api/accounting")
 
 
-def _json_write(action: Callable[[dict[str, Any]], dict[str, Any]]) -> Any:
+def _current_user() -> dict[str, Any] | None:
+    if "user_id" not in session:
+        return None
+    return {"id": session.get("user_id"), "username": session.get("username", ""), "role": session.get("role", "")}
+
+
+def _json_write(action: Callable[[dict[str, Any]], dict[str, Any]], module_name: str = "accounting", action_name: str = "create") -> Any:
     data = request.get_json(silent=True)
     if not isinstance(data, dict):
         return jsonify({"error": "Request body must be JSON"}), 400
     try:
-        return jsonify(action(data)), 201
+        result = action(data)
+        audit_service.log(action_name, module_name, _current_user(), entity_type=action.__qualname__.split(".")[0], entity_id=result.get("id"), description=str(result.get("description", result.get("invoice_number", result.get("reference", "")))))
+        return jsonify(result), 201
     except ValueError as exc:
         return jsonify({"error": str(exc)}), 400
 
@@ -196,7 +205,15 @@ def budgets() -> Any:
 @bp.route("/budgets", methods=["POST"])
 @admin_required
 def create_budget() -> Any:
-    return _json_write(service.create_budget)
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict):
+        return jsonify({"error": "Request body must be JSON"}), 400
+    try:
+        result = service.create_budget(data)
+        audit_service.log("create", "accounting", _current_user(), entity_type="budget", entity_id=result.get("id"), description=f"Budget for account {data.get('account_id')}, year {data.get('fiscal_year')}")
+        return jsonify(result), 201
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
 
 
 @bp.route("/budgets/<int:budget_id>", methods=["PUT"])
@@ -206,7 +223,9 @@ def update_budget(budget_id: int) -> Any:
     if not isinstance(data, dict):
         return jsonify({"error": "Request body must be JSON"}), 400
     try:
-        return jsonify(service.update_budget(budget_id, data))
+        result = service.update_budget(budget_id, data)
+        audit_service.log("update", "accounting", _current_user(), entity_type="budget", entity_id=budget_id, description=f"Updated budget to {data.get('budgeted_amount')}")
+        return jsonify(result)
     except ValueError as exc:
         return jsonify({"error": str(exc)}), 400
 
@@ -216,6 +235,7 @@ def update_budget(budget_id: int) -> Any:
 def delete_budget(budget_id: int) -> Any:
     try:
         service.delete_budget(budget_id)
+        audit_service.log("delete", "accounting", _current_user(), entity_type="budget", entity_id=budget_id, description="Deleted budget")
         return jsonify({"deleted": True})
     except ValueError as exc:
         return jsonify({"error": str(exc)}), 400
