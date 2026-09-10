@@ -27,3 +27,16 @@ def calendar() -> Any:
         return jsonify(calendar_service.financial_calendar(business_id, start_date, end_date))
     except ValueError as exc:
         return jsonify({"error": str(exc)}), 400
+
+
+@bp.route("/trends", methods=["GET"])
+@login_required
+def trends() -> Any:
+    business_id = request.args.get("business_id", type=int)
+    months = request.args.get("months", default=6, type=int)
+    if business_id is None:
+        return jsonify({"error": "business_id is required"}), 400
+    try:
+        return jsonify(service.trends(business_id, months))
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
