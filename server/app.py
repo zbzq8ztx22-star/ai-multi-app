@@ -23,6 +23,7 @@ if str(BASE_DIR) not in sys.path:
     sys.path.insert(0, str(BASE_DIR))
 
 from auth import init_auth, login_required
+from entities import init_app as init_entities
 from payroll import init_app as init_payroll
 
 # Load .env from the server directory, but never let it override env vars that
@@ -498,6 +499,7 @@ def create_app(test_config: dict[str, Any] | None = None) -> Flask:
 
     init_payroll(app)
     init_auth(app)
+    init_entities(app)
     return app
 
 

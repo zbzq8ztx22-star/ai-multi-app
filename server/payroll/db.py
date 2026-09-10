@@ -103,6 +103,47 @@ CREATE TABLE IF NOT EXISTS users (
 );
 
 CREATE INDEX IF NOT EXISTS idx_users_username ON users(username);
+
+CREATE TABLE IF NOT EXISTS taxpayers (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    employee_id INTEGER,
+    legal_name TEXT NOT NULL,
+    taxpayer_type TEXT NOT NULL DEFAULT 'individual' CHECK(taxpayer_type IN ('individual', 'business')),
+    filing_status TEXT NOT NULL DEFAULT 'single' CHECK(filing_status IN ('single', 'married_joint', 'married_separate', 'hoh', 'widow', 'business')),
+    residence_state TEXT NOT NULL DEFAULT '',
+    identifier_last4 TEXT NOT NULL DEFAULT '',
+    email TEXT NOT NULL DEFAULT '',
+    phone TEXT NOT NULL DEFAULT '',
+    address TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    FOREIGN KEY (employee_id) REFERENCES employees(id) ON DELETE SET NULL
+);
+
+CREATE TABLE IF NOT EXISTS businesses (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    legal_name TEXT NOT NULL,
+    dba_name TEXT NOT NULL DEFAULT '',
+    entity_type TEXT NOT NULL CHECK(entity_type IN ('sole_proprietorship', 'llc', 'partnership', 's_corp', 'c_corp', 'nonprofit')),
+    ein_last4 TEXT NOT NULL DEFAULT '',
+    formation_state TEXT NOT NULL DEFAULT '',
+    fiscal_year_end TEXT NOT NULL DEFAULT '12-31',
+    accounting_method TEXT NOT NULL DEFAULT 'cash' CHECK(accounting_method IN ('cash', 'accrual')),
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS business_owners (
+    business_id INTEGER NOT NULL,
+    taxpayer_id INTEGER NOT NULL,
+    ownership_percent REAL NOT NULL CHECK(ownership_percent >= 0 AND ownership_percent <= 100),
+    PRIMARY KEY (business_id, taxpayer_id),
+    FOREIGN KEY (business_id) REFERENCES businesses(id) ON DELETE CASCADE,
+    FOREIGN KEY (taxpayer_id) REFERENCES taxpayers(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_taxpayers_employee ON taxpayers(employee_id);
+CREATE INDEX IF NOT EXISTS idx_businesses_name ON businesses(legal_name);
 """
 
 

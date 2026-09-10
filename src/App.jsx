@@ -1,12 +1,13 @@
 import { useEffect, useState } from 'react'
-import { MessageSquare, Image, Code, FileText, Wallet, Menu, X, LogOut, Loader2 } from 'lucide-react'
+import { MessageSquare, Image, Calculator, FileText, Wallet, Menu, X, LogOut, Loader2, BookOpen } from 'lucide-react'
 import { apiGet, apiPost } from './api'
+import Accounting from './components/Accounting'
 import Chat from './components/Chat'
-import Vision from './components/Vision'
-import CodeGen from './components/CodeGen'
 import Docs from './components/Docs'
 import Login from './components/Login'
 import Payroll from './components/Payroll'
+import Tax from './components/Tax'
+import Vision from './components/Vision'
 
 function App() {
   const [activeTab, setActiveTab] = useState('chat')
@@ -32,7 +33,8 @@ function App() {
   const tabs = [
     { id: 'chat', name: 'Chat', icon: MessageSquare },
     { id: 'vision', name: 'Vision', icon: Image },
-    { id: 'code', name: 'Code', icon: Code },
+    { id: 'tax', name: 'Tax', icon: Calculator },
+    { id: 'accounting', name: 'Accounting', icon: BookOpen },
     { id: 'docs', name: 'Documents', icon: FileText },
     { id: 'payroll', name: 'Payroll', icon: Wallet },
   ]
@@ -113,7 +115,8 @@ function App() {
       >
         {activeTab === 'chat' && <Chat />}
         {activeTab === 'vision' && <Vision />}
-        {activeTab === 'code' && <CodeGen />}
+        {activeTab === 'tax' && <Tax />}
+        {activeTab === 'accounting' && <Accounting />}
         {activeTab === 'docs' && <Docs />}
         {activeTab === 'payroll' && <Payroll />}
       </main>
