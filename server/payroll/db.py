@@ -179,6 +179,48 @@ CREATE TABLE IF NOT EXISTS tax_returns (
 );
 
 CREATE INDEX IF NOT EXISTS idx_tax_returns_taxpayer_year ON tax_returns(taxpayer_id, tax_year);
+
+CREATE TABLE IF NOT EXISTS accounts (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    business_id INTEGER NOT NULL,
+    code TEXT NOT NULL,
+    name TEXT NOT NULL,
+    account_type TEXT NOT NULL CHECK(account_type IN ('asset', 'liability', 'equity', 'revenue', 'expense')),
+    active INTEGER NOT NULL DEFAULT 1 CHECK(active IN (0, 1)),
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    UNIQUE(business_id, code),
+    FOREIGN KEY (business_id) REFERENCES businesses(id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS journal_entries (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    business_id INTEGER NOT NULL,
+    entry_date TEXT NOT NULL,
+    reference TEXT NOT NULL DEFAULT '',
+    description TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'posted' CHECK(status IN ('draft', 'posted')),
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    FOREIGN KEY (business_id) REFERENCES businesses(id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS journal_lines (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    entry_id INTEGER NOT NULL,
+    account_id INTEGER NOT NULL,
+    description TEXT NOT NULL DEFAULT '',
+    debit REAL NOT NULL DEFAULT 0 CHECK(debit >= 0),
+    credit REAL NOT NULL DEFAULT 0 CHECK(credit >= 0),
+    CHECK((debit > 0 AND credit = 0) OR (credit > 0 AND debit = 0)),
+    FOREIGN KEY (entry_id) REFERENCES journal_entries(id) ON DELETE CASCADE,
+    FOREIGN KEY (account_id) REFERENCES accounts(id) ON DELETE RESTRICT
+);
+
+CREATE INDEX IF NOT EXISTS idx_accounts_business ON accounts(business_id, code);
+CREATE INDEX IF NOT EXISTS idx_entries_business_date ON journal_entries(business_id, entry_date);
+CREATE INDEX IF NOT EXISTS idx_lines_entry ON journal_lines(entry_id);
+CREATE INDEX IF NOT EXISTS idx_lines_account ON journal_lines(account_id);
 """
 
 
