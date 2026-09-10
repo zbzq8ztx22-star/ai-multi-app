@@ -1435,3 +1435,143 @@ def calculate_due_date(issue_date: str, net_days: int) -> str:
     d = datetime.date.fromisoformat(issue_date)
     due = d + datetime.timedelta(days=net_days)
     return due.isoformat()
+
+
+def list_credit_notes(business_id: int) -> list[dict[str, Any]]:
+    with get_db() as conn:
+        _require_business(conn, business_id)
+        rows = conn.execute(
+            """SELECT cn.*, c.name AS customer_name, i.invoice_number AS invoice_number
+               FROM credit_notes cn
+               LEFT JOIN accounting_contacts c ON c.id = cn.customer_id
+               LEFT JOIN invoices i ON i.id = cn.invoice_id
+               WHERE cn.business_id = ?
+               ORDER BY cn.credit_date DESC, cn.id DESC""",
+            (business_id,),
+        ).fetchall()
+        return [row_to_dict(row) for row in rows]
+
+
+def get_credit_note_detail(business_id: int, credit_id: int) -> dict[str, Any]:
+    with get_db() as conn:
+        _require_business(conn, business_id)
+        row = conn.execute(
+            """SELECT cn.*, c.name AS customer_name, i.invoice_number AS invoice_number
+               FROM credit_notes cn
+               LEFT JOIN accounting_contacts c ON c.id = cn.customer_id
+               LEFT JOIN invoices i ON i.id = cn.invoice_id
+               WHERE cn.business_id = ? AND cn.id = ?""",
+            (business_id, credit_id),
+        ).fetchone()
+        if row is None:
+            raise ValueError("Credit note not found")
+        return row_to_dict(row)
+
+
+def create_credit_note(data: dict[str, Any]) -> dict[str, Any]:
+    try:
+        business_id = int(data.get("business_id"))
+    except (TypeError, ValueError):
+        raise ValueError("business_id is required")
+    credit_number = str(data.get("credit_number", "")).strip()
+    if not credit_number:
+        raise ValueError("credit_number is required")
+    credit_date = _date(data.get("credit_date"), "credit_date")
+    try:
+        amount = float(data.get("amount", 0))
+    except (TypeError, ValueError):
+        raise ValueError("amount must be a number")
+    if amount <= 0:
+        raise ValueError("amount must be positive")
+    reason = str(data.get("reason", "")).strip()
+    invoice_id = data.get("invoice_id")
+    customer_id = data.get("customer_id")
+    receivable_account_id = data.get("receivable_account_id")
+    revenue_account_id = data.get("revenue_account_id")
+    if receivable_account_id is None or revenue_account_id is None:
+        raise ValueError("receivable_account_id and revenue_account_id are required")
+    receivable_account_id = int(receivable_account_id)
+    revenue_account_id = int(revenue_account_id)
+    now = now_utc()
+    with get_db() as conn:
+        _require_business(conn, business_id)
+        if _is_period_closed(conn, business_id, credit_date):
+            raise ValueError("Cannot post to a closed accounting period")
+        # Validate accounts
+        for aid in (receivable_account_id, revenue_account_id):
+            acct = conn.execute("SELECT * FROM accounts WHERE id = ? AND business_id = ?", (aid, business_id)).fetchone()
+            if acct is None:
+                raise ValueError("Account not found for this business")
+        # Validate invoice if provided
+        if invoice_id is not None:
+            inv = conn.execute("SELECT * FROM invoices WHERE id = ? AND business_id = ?", (invoice_id, business_id)).fetchone()
+            if inv is None:
+                raise ValueError("Invoice not found for this business")
+            if customer_id is None:
+                customer_id = inv["customer_id"]
+        # Validate customer if provided
+        if customer_id is not None:
+            cust = conn.execute("SELECT * FROM accounting_contacts WHERE id = ? AND business_id = ?", (customer_id, business_id)).fetchone()
+            if cust is None:
+                raise ValueError("Customer not found for this business")
+        # Create reversing journal entry: credit receivable (reduce AR), debit revenue (reduce revenue)
+        entry_cursor = conn.execute(
+            "INSERT INTO journal_entries (business_id, entry_date, reference, description, status, created_at, updated_at) VALUES (?, ?, ?, ?, 'posted', ?, ?)",
+            (business_id, credit_date, credit_number, f"Credit note {credit_number}", now, now),
+        )
+        entry_id = entry_cursor.lastrowid
+        # Debit revenue (reduce revenue), credit receivable (reduce AR)
+        conn.execute(
+            "INSERT INTO journal_lines (entry_id, account_id, description, debit, credit) VALUES (?, ?, ?, ?, ?)",
+            (entry_id, revenue_account_id, f"Credit note {credit_number}", amount, 0),
+        )
+        conn.execute(
+            "INSERT INTO journal_lines (entry_id, account_id, description, debit, credit) VALUES (?, ?, ?, ?, ?)",
+            (entry_id, receivable_account_id, f"Credit note {credit_number}", 0, amount),
+        )
+        # If linked to invoice, reduce invoice amount
+        if invoice_id is not None:
+            conn.execute("UPDATE invoices SET amount_paid = amount_paid + ?, updated_at = ? WHERE id = ?",
+                         (amount, now, invoice_id))
+        try:
+            cursor = conn.execute(
+                "INSERT INTO credit_notes (business_id, invoice_id, customer_id, credit_number, credit_date, amount, reason, receivable_account_id, revenue_account_id, journal_entry_id, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'applied', ?, ?)",
+                (business_id, invoice_id, customer_id, credit_number, credit_date, amount, reason, receivable_account_id, revenue_account_id, entry_id, now, now),
+            )
+        except sqlite3.IntegrityError:
+            raise ValueError("Credit note number already exists for this business")
+        conn.commit()
+        return get_credit_note_detail(business_id, cursor.lastrowid)
+
+
+def void_credit_note(business_id: int, credit_id: int) -> dict[str, Any]:
+    with get_db() as conn:
+        _require_business(conn, business_id)
+        row = conn.execute("SELECT * FROM credit_notes WHERE id = ? AND business_id = ?", (credit_id, business_id)).fetchone()
+        if row is None:
+            raise ValueError("Credit note not found")
+        if row["status"] == "void":
+            raise ValueError("Credit note is already void")
+        # Create reversing entry
+        now = now_utc()
+        entry_cursor = conn.execute(
+            "INSERT INTO journal_entries (business_id, entry_date, reference, description, status, created_at, updated_at) VALUES (?, ?, ?, ?, 'posted', ?, ?)",
+            (business_id, now[:10], f"VOID-{row['credit_number']}", f"Void credit note {row['credit_number']}", now, now),
+        )
+        entry_id = entry_cursor.lastrowid
+        # Reverse the original entry
+        conn.execute(
+            "INSERT INTO journal_lines (entry_id, account_id, description, debit, credit) VALUES (?, ?, ?, ?, ?)",
+            (entry_id, row["receivable_account_id"], f"Void CN {row['credit_number']}", row["amount"], 0),
+        )
+        conn.execute(
+            "INSERT INTO journal_lines (entry_id, account_id, description, debit, credit) VALUES (?, ?, ?, ?, ?)",
+            (entry_id, row["revenue_account_id"], f"Void CN {row['credit_number']}", 0, row["amount"]),
+        )
+        # If linked to invoice, reverse the amount_paid reduction
+        if row["invoice_id"] is not None:
+            conn.execute("UPDATE invoices SET amount_paid = MAX(amount_paid - ?, 0), updated_at = ? WHERE id = ?",
+                         (row["amount"], now, row["invoice_id"]))
+        conn.execute("UPDATE credit_notes SET status = 'void', updated_at = ? WHERE id = ?", (now, credit_id))
+        conn.commit()
+        return get_credit_note_detail(business_id, credit_id)

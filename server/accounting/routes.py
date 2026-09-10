@@ -787,3 +787,39 @@ def delete_payment_terms(term_id: int) -> Any:
         return jsonify({"deleted": True})
     except ValueError as exc:
         return jsonify({"error": str(exc)}), 400
+
+
+@bp.route("/credit-notes", methods=["GET"])
+@login_required
+def credit_notes() -> Any:
+    business_id = request.args.get("business_id", type=int)
+    if business_id is None:
+        return jsonify({"error": "business_id is required"}), 400
+    try:
+        return jsonify(service.list_credit_notes(business_id))
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+
+
+@bp.route("/credit-notes", methods=["POST"])
+@admin_required
+def create_credit_note() -> Any:
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict):
+        return jsonify({"error": "Request body must be JSON"}), 400
+    try:
+        return jsonify(service.create_credit_note(data)), 201
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+
+
+@bp.route("/credit-notes/<int:credit_id>/void", methods=["PUT"])
+@admin_required
+def void_credit_note(credit_id: int) -> Any:
+    business_id = request.args.get("business_id", type=int)
+    if business_id is None:
+        return jsonify({"error": "business_id is required"}), 400
+    try:
+        return jsonify(service.void_credit_note(business_id, credit_id))
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400

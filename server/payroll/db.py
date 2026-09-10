@@ -477,6 +477,32 @@ CREATE TABLE IF NOT EXISTS payment_terms (
 );
 
 CREATE INDEX IF NOT EXISTS idx_payment_terms_business ON payment_terms(business_id, name);
+
+CREATE TABLE IF NOT EXISTS credit_notes (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    business_id INTEGER NOT NULL,
+    invoice_id INTEGER,
+    customer_id INTEGER,
+    credit_number TEXT NOT NULL,
+    credit_date TEXT NOT NULL,
+    amount REAL NOT NULL CHECK(amount > 0),
+    reason TEXT NOT NULL DEFAULT '',
+    receivable_account_id INTEGER NOT NULL,
+    revenue_account_id INTEGER NOT NULL,
+    journal_entry_id INTEGER NOT NULL,
+    status TEXT NOT NULL DEFAULT 'applied' CHECK(status IN ('applied', 'void')),
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    UNIQUE(business_id, credit_number),
+    FOREIGN KEY (business_id) REFERENCES businesses(id) ON DELETE CASCADE,
+    FOREIGN KEY (invoice_id) REFERENCES invoices(id) ON DELETE SET NULL,
+    FOREIGN KEY (customer_id) REFERENCES accounting_contacts(id),
+    FOREIGN KEY (receivable_account_id) REFERENCES accounts(id),
+    FOREIGN KEY (revenue_account_id) REFERENCES accounts(id),
+    FOREIGN KEY (journal_entry_id) REFERENCES journal_entries(id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_credit_notes_business ON credit_notes(business_id, credit_date);
 """
 
 
