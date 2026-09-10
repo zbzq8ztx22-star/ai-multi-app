@@ -180,17 +180,32 @@ CREATE TABLE IF NOT EXISTS tax_returns (
 
 CREATE INDEX IF NOT EXISTS idx_tax_returns_taxpayer_year ON tax_returns(taxpayer_id, tax_year);
 
+CREATE TABLE IF NOT EXISTS account_groups (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    business_id INTEGER NOT NULL,
+    name TEXT NOT NULL,
+    account_type TEXT NOT NULL CHECK(account_type IN ('asset', 'liability', 'equity', 'revenue', 'expense')),
+    display_order INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL,
+    FOREIGN KEY (business_id) REFERENCES businesses(id) ON DELETE CASCADE,
+    UNIQUE(business_id, name)
+);
+
+CREATE INDEX IF NOT EXISTS idx_account_groups_business ON account_groups(business_id, display_order);
+
 CREATE TABLE IF NOT EXISTS accounts (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     business_id INTEGER NOT NULL,
     code TEXT NOT NULL,
     name TEXT NOT NULL,
     account_type TEXT NOT NULL CHECK(account_type IN ('asset', 'liability', 'equity', 'revenue', 'expense')),
+    group_id INTEGER,
     active INTEGER NOT NULL DEFAULT 1 CHECK(active IN (0, 1)),
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL,
     UNIQUE(business_id, code),
-    FOREIGN KEY (business_id) REFERENCES businesses(id) ON DELETE CASCADE
+    FOREIGN KEY (business_id) REFERENCES businesses(id) ON DELETE CASCADE,
+    FOREIGN KEY (group_id) REFERENCES account_groups(id) ON DELETE SET NULL
 );
 
 CREATE TABLE IF NOT EXISTS journal_entries (

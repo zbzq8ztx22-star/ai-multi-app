@@ -1232,3 +1232,100 @@ def vendor_statement(business_id: int, vendor_id: int, start_date: str | None = 
             "total_spent": total_spent,
             "expense_count": len(expenses),
         }
+
+
+def list_account_groups(business_id: int) -> list[dict[str, Any]]:
+    with get_db() as conn:
+        _require_business(conn, business_id)
+        rows = conn.execute(
+            """SELECT ag.*, COUNT(a.id) AS account_count
+               FROM account_groups ag
+               LEFT JOIN accounts a ON a.group_id = ag.id AND a.business_id = ag.business_id
+               WHERE ag.business_id = ?
+               GROUP BY ag.id
+               ORDER BY ag.account_type, ag.display_order, ag.name""",
+            (business_id,),
+        ).fetchall()
+        return [row_to_dict(row) for row in rows]
+
+
+def create_account_group(data: dict[str, Any]) -> dict[str, Any]:
+    try:
+        business_id = int(data.get("business_id"))
+    except (TypeError, ValueError):
+        raise ValueError("business_id is required")
+    name = str(data.get("name", "")).strip()
+    if not name:
+        raise ValueError("name is required")
+    account_type = str(data.get("account_type", "")).strip().lower()
+    if account_type not in ACCOUNT_TYPES:
+        raise ValueError(f"account_type must be one of: {', '.join(sorted(ACCOUNT_TYPES))}")
+    display_order = int(data.get("display_order", 0))
+    now = now_utc()
+    with get_db() as conn:
+        _require_business(conn, business_id)
+        try:
+            cursor = conn.execute(
+                "INSERT INTO account_groups (business_id, name, account_type, display_order, created_at) VALUES (?, ?, ?, ?, ?)",
+                (business_id, name, account_type, display_order, now),
+            )
+        except sqlite3.IntegrityError:
+            raise ValueError("Account group with this name already exists for this business")
+        conn.commit()
+        return row_to_dict(conn.execute("SELECT * FROM account_groups WHERE id = ?", (cursor.lastrowid,)).fetchone())
+
+
+def update_account_group(group_id: int, data: dict[str, Any]) -> dict[str, Any]:
+    name = str(data.get("name", "")).strip()
+    display_order = data.get("display_order")
+    account_type = str(data.get("account_type", "")).strip().lower()
+    with get_db() as conn:
+        row = conn.execute("SELECT * FROM account_groups WHERE id = ?", (group_id,)).fetchone()
+        if row is None:
+            raise ValueError("Account group not found")
+        updates: list[str] = []
+        params: list[Any] = []
+        if name:
+            updates.append("name = ?")
+            params.append(name)
+        if display_order is not None:
+            updates.append("display_order = ?")
+            params.append(int(display_order))
+        if account_type:
+            if account_type not in ACCOUNT_TYPES:
+                raise ValueError(f"account_type must be one of: {', '.join(sorted(ACCOUNT_TYPES))}")
+            updates.append("account_type = ?")
+            params.append(account_type)
+        if updates:
+            updates.append("created_at = created_at")
+            conn.execute(f"UPDATE account_groups SET {', '.join(updates)} WHERE id = ?", [*params, group_id])
+            conn.commit()
+        return row_to_dict(conn.execute("SELECT * FROM account_groups WHERE id = ?", (group_id,)).fetchone())
+
+
+def delete_account_group(group_id: int) -> None:
+    with get_db() as conn:
+        row = conn.execute("SELECT id FROM account_groups WHERE id = ?", (group_id,)).fetchone()
+        if row is None:
+            raise ValueError("Account group not found")
+        # Unlink accounts from this group before deleting
+        conn.execute("UPDATE accounts SET group_id = NULL WHERE group_id = ?", (group_id,))
+        conn.execute("DELETE FROM account_groups WHERE id = ?", (group_id,))
+        conn.commit()
+
+
+def assign_account_to_group(account_id: int, group_id: int) -> dict[str, Any]:
+    with get_db() as conn:
+        account = conn.execute("SELECT * FROM accounts WHERE id = ?", (account_id,)).fetchone()
+        if account is None:
+            raise ValueError("Account not found")
+        group = conn.execute("SELECT * FROM account_groups WHERE id = ?", (group_id,)).fetchone()
+        if group is None:
+            raise ValueError("Account group not found")
+        if group["business_id"] != account["business_id"]:
+            raise ValueError("Account and group must belong to the same business")
+        if group["account_type"] != account["account_type"]:
+            raise ValueError("Account type must match group type")
+        conn.execute("UPDATE accounts SET group_id = ?, updated_at = ? WHERE id = ?", (group_id, now_utc(), account_id))
+        conn.commit()
+        return row_to_dict(conn.execute("SELECT * FROM accounts WHERE id = ?", (account_id,)).fetchone())

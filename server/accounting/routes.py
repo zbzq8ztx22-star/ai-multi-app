@@ -680,3 +680,64 @@ def vendor_statement(vendor_id: int) -> Any:
         return jsonify(service.vendor_statement(business_id, vendor_id, start_date, end_date))
     except ValueError as exc:
         return jsonify({"error": str(exc)}), 400
+
+
+@bp.route("/account-groups", methods=["GET"])
+@login_required
+def account_groups() -> Any:
+    business_id = request.args.get("business_id", type=int)
+    if business_id is None:
+        return jsonify({"error": "business_id is required"}), 400
+    try:
+        return jsonify(service.list_account_groups(business_id))
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+
+
+@bp.route("/account-groups", methods=["POST"])
+@admin_required
+def create_account_group() -> Any:
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict):
+        return jsonify({"error": "Request body must be JSON"}), 400
+    try:
+        return jsonify(service.create_account_group(data)), 201
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+
+
+@bp.route("/account-groups/<int:group_id>", methods=["PUT"])
+@admin_required
+def update_account_group(group_id: int) -> Any:
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict):
+        return jsonify({"error": "Request body must be JSON"}), 400
+    try:
+        return jsonify(service.update_account_group(group_id, data))
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+
+
+@bp.route("/account-groups/<int:group_id>", methods=["DELETE"])
+@admin_required
+def delete_account_group(group_id: int) -> Any:
+    try:
+        service.delete_account_group(group_id)
+        return jsonify({"deleted": True})
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+
+
+@bp.route("/accounts/<int:account_id>/assign-group", methods=["PUT"])
+@admin_required
+def assign_account_to_group(account_id: int) -> Any:
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict):
+        return jsonify({"error": "Request body must be JSON"}), 400
+    group_id = data.get("group_id")
+    if group_id is None:
+        return jsonify({"error": "group_id is required"}), 400
+    try:
+        return jsonify(service.assign_account_to_group(account_id, int(group_id)))
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
