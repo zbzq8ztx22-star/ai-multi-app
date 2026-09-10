@@ -656,3 +656,45 @@ def accounts_payable_aging(business_id: int, as_of: str | None = None) -> dict[s
             "bucket": bucket,
         })
     return {"as_of": as_of, "lines": lines, "totals": totals, "total_outstanding": round(sum(totals.values()), 2)}
+
+
+def financial_kpis(business_id: int, start_date: str, end_date: str) -> dict[str, Any]:
+    """Compute key financial ratios from posted entries.
+
+    Ratios include current ratio, debt-to-equity, profit margin, and
+    return on equity. All values are derived from the same posted journal
+    entries used by the financial statements.
+    """
+    pl = profit_and_loss(business_id, start_date, end_date)
+    bs = balance_sheet(business_id, end_date)
+
+    total_assets = bs["total_assets"]
+    total_liabilities = bs["total_liabilities"]
+    total_equity = bs["total_equity"]
+    total_revenue = pl["total_revenue"]
+    net_income = pl["net_income"]
+
+    current_assets = round(sum(row["amount"] for row in bs["assets"] if row["account_type"] == "asset"), 2)
+    current_liabilities = total_liabilities
+
+    current_ratio = round(current_assets / current_liabilities, 2) if current_liabilities > 0 else None
+    debt_to_equity = round(total_liabilities / total_equity, 2) if total_equity > 0 else None
+    profit_margin = round((net_income / total_revenue) * 100, 2) if total_revenue > 0 else None
+    return_on_equity = round((net_income / total_equity) * 100, 2) if total_equity > 0 else None
+    asset_turnover = round(total_revenue / total_assets, 2) if total_assets > 0 else None
+
+    return {
+        "start_date": pl["start_date"],
+        "end_date": pl["end_date"],
+        "as_of": bs["as_of"],
+        "current_ratio": current_ratio,
+        "debt_to_equity": debt_to_equity,
+        "profit_margin_pct": profit_margin,
+        "return_on_equity_pct": return_on_equity,
+        "asset_turnover": asset_turnover,
+        "total_assets": total_assets,
+        "total_liabilities": total_liabilities,
+        "total_equity": total_equity,
+        "total_revenue": total_revenue,
+        "net_income": net_income,
+    }

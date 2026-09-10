@@ -258,3 +258,17 @@ def ap_aging() -> Any:
         return jsonify(service.accounts_payable_aging(business_id, as_of))
     except ValueError as exc:
         return jsonify({"error": str(exc)}), 400
+
+
+@bp.route("/reports/kpis", methods=["GET"])
+@login_required
+def kpis() -> Any:
+    business_id = request.args.get("business_id", type=int)
+    start_date = request.args.get("start_date", "")
+    end_date = request.args.get("end_date", "")
+    if business_id is None:
+        return jsonify({"error": "business_id is required"}), 400
+    try:
+        return jsonify(service.financial_kpis(business_id, start_date, end_date))
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
