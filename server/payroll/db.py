@@ -503,6 +503,31 @@ CREATE TABLE IF NOT EXISTS credit_notes (
 );
 
 CREATE INDEX IF NOT EXISTS idx_credit_notes_business ON credit_notes(business_id, credit_date);
+
+CREATE TABLE IF NOT EXISTS depreciation_assets (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    business_id INTEGER NOT NULL,
+    name TEXT NOT NULL,
+    asset_account_id INTEGER NOT NULL,
+    accumulated_account_id INTEGER NOT NULL,
+    depreciation_account_id INTEGER NOT NULL,
+    cost REAL NOT NULL CHECK(cost > 0),
+    salvage_value REAL NOT NULL DEFAULT 0 CHECK(salvage_value >= 0),
+    useful_life_months INTEGER NOT NULL CHECK(useful_life_months > 0),
+    method TEXT NOT NULL DEFAULT 'straight_line' CHECK(method IN ('straight_line', 'declining_balance')),
+    depreciation_rate REAL NOT NULL DEFAULT 0 CHECK(depreciation_rate >= 0 AND depreciation_rate <= 100),
+    acquisition_date TEXT NOT NULL,
+    start_date TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active', 'fully_depreciated', 'disposed')),
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    FOREIGN KEY (business_id) REFERENCES businesses(id) ON DELETE CASCADE,
+    FOREIGN KEY (asset_account_id) REFERENCES accounts(id),
+    FOREIGN KEY (accumulated_account_id) REFERENCES accounts(id),
+    FOREIGN KEY (depreciation_account_id) REFERENCES accounts(id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_depreciation_assets_business ON depreciation_assets(business_id, status);
 """
 
 

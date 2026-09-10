@@ -823,3 +823,51 @@ def void_credit_note(credit_id: int) -> Any:
         return jsonify(service.void_credit_note(business_id, credit_id))
     except ValueError as exc:
         return jsonify({"error": str(exc)}), 400
+
+
+@bp.route("/depreciation-assets", methods=["GET"])
+@login_required
+def depreciation_assets() -> Any:
+    business_id = request.args.get("business_id", type=int)
+    if business_id is None:
+        return jsonify({"error": "business_id is required"}), 400
+    try:
+        return jsonify(service.list_depreciation_assets(business_id))
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+
+
+@bp.route("/depreciation-assets", methods=["POST"])
+@admin_required
+def create_depreciation_asset() -> Any:
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict):
+        return jsonify({"error": "Request body must be JSON"}), 400
+    try:
+        return jsonify(service.create_depreciation_asset(data)), 201
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+
+
+@bp.route("/depreciation-assets/<int:asset_id>/schedule", methods=["GET"])
+@login_required
+def depreciation_schedule(asset_id: int) -> Any:
+    try:
+        return jsonify(service.depreciation_schedule(asset_id))
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+
+
+@bp.route("/depreciation-assets/<int:asset_id>/post", methods=["POST"])
+@admin_required
+def post_depreciation(asset_id: int) -> Any:
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict):
+        return jsonify({"error": "Request body must be JSON"}), 400
+    through_date = data.get("through_date")
+    if not through_date:
+        return jsonify({"error": "through_date is required"}), 400
+    try:
+        return jsonify(service.post_depreciation(asset_id, through_date))
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
