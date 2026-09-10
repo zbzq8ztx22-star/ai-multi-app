@@ -224,12 +224,14 @@ CREATE TABLE IF NOT EXISTS journal_lines (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     entry_id INTEGER NOT NULL,
     account_id INTEGER NOT NULL,
+    cost_center_id INTEGER,
     description TEXT NOT NULL DEFAULT '',
     debit REAL NOT NULL DEFAULT 0 CHECK(debit >= 0),
     credit REAL NOT NULL DEFAULT 0 CHECK(credit >= 0),
     CHECK((debit > 0 AND credit = 0) OR (credit > 0 AND debit = 0)),
     FOREIGN KEY (entry_id) REFERENCES journal_entries(id) ON DELETE CASCADE,
-    FOREIGN KEY (account_id) REFERENCES accounts(id) ON DELETE RESTRICT
+    FOREIGN KEY (account_id) REFERENCES accounts(id) ON DELETE RESTRICT,
+    FOREIGN KEY (cost_center_id) REFERENCES cost_centers(id) ON DELETE SET NULL
 );
 
 CREATE INDEX IF NOT EXISTS idx_accounts_business ON accounts(business_id, code);
@@ -443,6 +445,21 @@ CREATE TABLE IF NOT EXISTS tax_payments (
 );
 
 CREATE INDEX IF NOT EXISTS idx_tax_payments_business ON tax_payments(business_id, payment_date);
+
+CREATE TABLE IF NOT EXISTS cost_centers (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    business_id INTEGER NOT NULL,
+    code TEXT NOT NULL,
+    name TEXT NOT NULL,
+    description TEXT NOT NULL DEFAULT '',
+    active INTEGER NOT NULL DEFAULT 1 CHECK(active IN (0, 1)),
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    FOREIGN KEY (business_id) REFERENCES businesses(id) ON DELETE CASCADE,
+    UNIQUE(business_id, code)
+);
+
+CREATE INDEX IF NOT EXISTS idx_cost_centers_business ON cost_centers(business_id, code);
 """
 
 
