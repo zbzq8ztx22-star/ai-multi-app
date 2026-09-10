@@ -22,8 +22,13 @@ BASE_DIR = Path(__file__).resolve().parent
 if str(BASE_DIR) not in sys.path:
     sys.path.insert(0, str(BASE_DIR))
 
+from accounting import init_app as init_accounting
+from audit import init_app as init_audit
 from auth import init_auth, login_required
+from dashboard import init_app as init_dashboard
+from entities import init_app as init_entities
 from payroll import init_app as init_payroll
+from tax import init_app as init_tax
 
 # Load .env from the server directory, but never let it override env vars that
 # are already set (so tests can preset configuration).
@@ -498,6 +503,11 @@ def create_app(test_config: dict[str, Any] | None = None) -> Flask:
 
     init_payroll(app)
     init_auth(app)
+    init_entities(app)
+    init_tax(app)
+    init_accounting(app)
+    init_dashboard(app)
+    init_audit(app)
     return app
 
 

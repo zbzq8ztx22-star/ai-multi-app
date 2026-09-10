@@ -36,6 +36,37 @@ def get_user_by_id(user_id: int) -> dict[str, Any] | None:
         return _row_to_dict(row) if row else None
 
 
+def list_users() -> list[dict[str, Any]]:
+    with get_db() as conn:
+        rows = conn.execute("SELECT id, username, role, created_at, updated_at FROM users ORDER BY id").fetchall()
+        return [_row_to_dict(row) for row in rows]
+
+
+def update_user_role(user_id: int, role: str) -> dict[str, Any]:
+    if role not in ROLES:
+        raise ValueError("Invalid role")
+    now = now_utc()
+    with get_db() as conn:
+        row = conn.execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone()
+        if row is None:
+            raise ValueError("User not found")
+        conn.execute("UPDATE users SET role = ?, updated_at = ? WHERE id = ?", (role, now, user_id))
+        conn.commit()
+        return _row_to_dict(conn.execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone())
+
+
+def delete_user(user_id: int) -> None:
+    with get_db() as conn:
+        row = conn.execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone()
+        if row is None:
+            raise ValueError("User not found")
+        count = conn.execute("SELECT COUNT(*) AS c FROM users").fetchone()["c"]
+        if count <= 1:
+            raise ValueError("Cannot delete the last user")
+        conn.execute("DELETE FROM users WHERE id = ?", (user_id,))
+        conn.commit()
+
+
 def create_user(username: str, password: str, role: str = "viewer") -> dict[str, Any]:
     if role not in ROLES:
         raise ValueError("Invalid role")
@@ -144,6 +175,35 @@ def me() -> Any:
         session.clear()
         return jsonify({"error": "Unauthorized"}), 401
     return jsonify({"id": user["id"], "username": user["username"], "role": user["role"]})
+
+
+@bp.route("/users", methods=["GET"])
+@admin_required
+def users() -> Any:
+    return jsonify(list_users())
+
+
+@bp.route("/users/<int:user_id>/role", methods=["PUT"])
+@admin_required
+def change_role(user_id: int) -> Any:
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict):
+        return jsonify({"error": "Request body must be JSON"}), 400
+    role = str(data.get("role", "")).strip()
+    try:
+        return jsonify(update_user_role(user_id, role))
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+
+
+@bp.route("/users/<int:user_id>", methods=["DELETE"])
+@admin_required
+def remove_user(user_id: int) -> Any:
+    try:
+        delete_user(user_id)
+        return jsonify({"deleted": True})
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
 
 
 def _ensure_default_admin(password: str | None) -> None:

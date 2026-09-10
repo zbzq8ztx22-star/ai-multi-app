@@ -1,6 +1,6 @@
 # AI Multi-App
 
-AI Multi-App provides real chat, vision, code generation, and document analysis through a Flask bridge to OpenExecutive, with a Vite frontend.
+AI Multi-App provides real chat, vision, code generation, and document analysis through a Flask bridge to OpenExecutive, plus a business suite (payroll, personal tax estimates, and double-entry accounting) backed by SQLite. The frontend is built with Vite and React.
 
 ## Status
 
@@ -11,7 +11,13 @@ The chat, vision, code, and document flows have been stabilized for real OpenExe
 - **Code** generates code from a language and natural-language request.
 - **Documents** extracts supported uploads and requests analysis or summaries.
 
-Payroll is the next planned feature. It is **not implemented yet**.
+The business suite is implemented and works independently of OpenExecutive:
+
+- **Payroll** — employees, pay periods, payslip calculation with YTD and W-4 adjustments, reports, CSV export, and an OpenExecutive-backed assistant.
+- **Personal tax** — taxpayer records and personal tax-return estimates using versioned 2025 federal rules.
+- **Accounting** — business-scoped double-entry accounting with chart of accounts, journal entries, contacts, invoices, payments, expenses, trial balance, general ledger, Profit & Loss, Balance Sheet, and a corporate tax estimate.
+
+All business data is business-scoped and protected by session authentication.
 
 ## Repository layout
 
@@ -154,13 +160,68 @@ Choose a language, describe the desired result, and generate code through OpenEx
 
 Upload a supported document and request analysis or a summary. Uploads are limited to 16 MB and are handled by the Flask backend.
 
+### Payroll
+
+Manage employees (hourly or salary, W-4 allowances, dependents), create pay periods, calculate payslips with YTD and W-4 adjustments, view payslip details, print payslips, run payroll reports, and export CSV. An OpenExecutive-backed assistant answers payroll questions. Payroll routes require login; management routes require an admin role.
+
+### Personal tax
+
+Create taxpayers and personal tax returns. The calculator applies 2025 federal rules: total income, AGI, standard vs. itemized deduction, taxable income, progressive federal tax, federal refund/balance, and state refund/balance. Estimates only — not legal or tax advice.
+
+### Accounting
+
+Create businesses, a chart of accounts (asset, liability, equity, revenue, expense), and journal entries (draft or posted). Posted entries drive the trial balance, general ledger, Profit & Loss, Balance Sheet, and the corporate tax estimate. Contacts (customers/vendors), invoices, payments, and expenses generate balanced journal entries automatically. Reports support date-range filters and are business-scoped.
+
 ## API endpoints
+
+Core AI flows:
 
 - `POST /api/chat` — chat requests
 - `POST /api/vision` — image analysis
 - `POST /api/code` — code generation
 - `POST /api/docs` — document analysis
 - `GET /api/health` — backend and OpenExecutive connection status
+
+Auth:
+
+- `POST /api/auth/register` — register a user (admin bootstrap)
+- `POST /api/auth/login` — start a session
+- `POST /api/auth/logout` — end a session
+- `GET /api/auth/me` — current session user
+
+Entities:
+
+- `GET /api/entities/taxpayers` / `POST /api/entities/taxpayers`
+- `GET /api/entities/businesses` / `POST /api/entities/businesses`
+
+Payroll:
+
+- `GET/POST /api/payroll/employees`
+- `GET/POST /api/payroll/pay-periods`
+- `POST /api/payroll/payslips/calculate`
+- `GET /api/payroll/payslips`
+- `GET /api/payroll/reports/summary`
+- `GET /api/payroll/reports/export.csv`
+- `POST /api/payroll/assistant`
+
+Personal tax:
+
+- `GET/POST /api/tax/returns`
+- `PUT /api/tax/returns/:id`
+
+Accounting:
+
+- `GET/POST /api/accounting/accounts`
+- `GET/POST /api/accounting/entries`
+- `GET /api/accounting/trial-balance`
+- `GET /api/accounting/ledger`
+- `GET/POST /api/accounting/contacts`
+- `GET/POST /api/accounting/invoices`
+- `POST /api/accounting/payments`
+- `GET/POST /api/accounting/expenses`
+- `GET /api/accounting/reports/profit-loss`
+- `GET /api/accounting/reports/balance-sheet`
+- `GET /api/accounting/reports/corporate-tax`
 
 ## Troubleshooting
 
@@ -170,6 +231,7 @@ Upload a supported document and request analysis or a summary. Uploads are limit
 - Confirm OpenExecutive is listening on port 8000.
 - Confirm its provider credentials are configured locally.
 - Confirm `BACKEND_SHARED_SECRET` exactly matches `OPENEXECUTIVE_API_KEY` in `server\.env`.
+- The payroll, tax, and accounting modules work without OpenExecutive; only the chat, vision, code, document, and payroll-assistant flows depend on it.
 
 ### Flask cannot connect
 

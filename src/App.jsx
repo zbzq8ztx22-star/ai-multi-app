@@ -1,15 +1,18 @@
 import { useEffect, useState } from 'react'
-import { MessageSquare, Image, Code, FileText, Wallet, Menu, X, LogOut, Loader2 } from 'lucide-react'
+import { MessageSquare, Image, Calculator, FileText, Wallet, Menu, X, LogOut, Loader2, BookOpen, LayoutDashboard, Settings as SettingsIcon } from 'lucide-react'
 import { apiGet, apiPost } from './api'
+import Accounting from './components/Accounting'
 import Chat from './components/Chat'
-import Vision from './components/Vision'
-import CodeGen from './components/CodeGen'
+import Dashboard from './components/Dashboard'
 import Docs from './components/Docs'
 import Login from './components/Login'
 import Payroll from './components/Payroll'
+import Settings from './components/Settings'
+import Tax from './components/Tax'
+import Vision from './components/Vision'
 
 function App() {
-  const [activeTab, setActiveTab] = useState('chat')
+  const [activeTab, setActiveTab] = useState('dashboard')
   const [sidebarOpen, setSidebarOpen] = useState(true)
   const [user, setUser] = useState(null)
   const [authLoading, setAuthLoading] = useState(true)
@@ -30,11 +33,14 @@ function App() {
   }
 
   const tabs = [
+    { id: 'dashboard', name: 'Dashboard', icon: LayoutDashboard },
     { id: 'chat', name: 'Chat', icon: MessageSquare },
     { id: 'vision', name: 'Vision', icon: Image },
-    { id: 'code', name: 'Code', icon: Code },
+    { id: 'tax', name: 'Tax', icon: Calculator },
+    { id: 'accounting', name: 'Accounting', icon: BookOpen },
     { id: 'docs', name: 'Documents', icon: FileText },
     { id: 'payroll', name: 'Payroll', icon: Wallet },
+    { id: 'settings', name: 'Settings', icon: SettingsIcon },
   ]
 
   if (authLoading) {
@@ -111,11 +117,14 @@ function App() {
         aria-labelledby={`${activeTab}-tab`}
         className="flex-1 overflow-hidden"
       >
+        {activeTab === 'dashboard' && <Dashboard onNavigate={setActiveTab} />}
         {activeTab === 'chat' && <Chat />}
         {activeTab === 'vision' && <Vision />}
-        {activeTab === 'code' && <CodeGen />}
+        {activeTab === 'tax' && <Tax />}
+        {activeTab === 'accounting' && <Accounting />}
         {activeTab === 'docs' && <Docs />}
         {activeTab === 'payroll' && <Payroll />}
+        {activeTab === 'settings' && <Settings />}
       </main>
     </div>
   )
