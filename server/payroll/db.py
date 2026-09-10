@@ -396,6 +396,21 @@ CREATE TABLE IF NOT EXISTS exchange_rates (
 
 CREATE INDEX IF NOT EXISTS idx_currencies_business ON currencies(business_id, code);
 CREATE INDEX IF NOT EXISTS idx_exchange_rates_business ON exchange_rates(business_id, rate_date);
+
+CREATE TABLE IF NOT EXISTS closing_periods (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    business_id INTEGER NOT NULL,
+    period_start TEXT NOT NULL,
+    period_end TEXT NOT NULL,
+    closed_by TEXT NOT NULL DEFAULT '',
+    closed_at TEXT NOT NULL,
+    notes TEXT NOT NULL DEFAULT '',
+    FOREIGN KEY (business_id) REFERENCES businesses(id) ON DELETE CASCADE,
+    UNIQUE(business_id, period_start, period_end),
+    CHECK(period_end >= period_start)
+);
+
+CREATE INDEX IF NOT EXISTS idx_closing_periods_business ON closing_periods(business_id, period_end);
 """
 
 

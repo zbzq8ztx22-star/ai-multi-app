@@ -605,3 +605,50 @@ def post_due_recurring() -> Any:
         return jsonify({"posted_count": len(posted), "posted": posted})
     except ValueError as exc:
         return jsonify({"error": str(exc)}), 400
+
+
+@bp.route("/closing-periods", methods=["GET"])
+@login_required
+def closing_periods() -> Any:
+    business_id = request.args.get("business_id", type=int)
+    if business_id is None:
+        return jsonify({"error": "business_id is required"}), 400
+    try:
+        return jsonify(service.list_closing_periods(business_id))
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+
+
+@bp.route("/closing-periods", methods=["POST"])
+@admin_required
+def close_period() -> Any:
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict):
+        return jsonify({"error": "Request body must be JSON"}), 400
+    try:
+        return jsonify(service.close_period(data)), 201
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+
+
+@bp.route("/closing-periods/<int:period_id>", methods=["DELETE"])
+@admin_required
+def reopen_period(period_id: int) -> Any:
+    try:
+        service.reopen_period(period_id)
+        return jsonify({"reopened": True})
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+
+
+@bp.route("/closing-periods/check", methods=["GET"])
+@login_required
+def check_period_closed() -> Any:
+    business_id = request.args.get("business_id", type=int)
+    entry_date = request.args.get("entry_date", "")
+    if business_id is None:
+        return jsonify({"error": "business_id is required"}), 400
+    try:
+        return jsonify(service.is_period_closed(business_id, entry_date))
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400

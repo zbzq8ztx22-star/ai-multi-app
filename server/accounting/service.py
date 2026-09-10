@@ -119,6 +119,8 @@ def create_entry(data: dict[str, Any]) -> dict[str, Any]:
     now = now_utc()
     with get_db() as conn:
         _require_business(conn, business_id)
+        if _is_period_closed(conn, business_id, entry_date):
+            raise ValueError("Cannot post to a closed accounting period")
         account_ids = {row["id"] for row in conn.execute("SELECT id FROM accounts WHERE business_id = ? AND active = 1", (business_id,)).fetchall()}
         if any(line[0] not in account_ids for line in lines):
             raise ValueError("All accounts must be active and belong to the business")
@@ -1102,3 +1104,69 @@ def post_due_recurring_expenses(business_id: int, as_of: str | None = None) -> l
             posted.append(row_to_dict(row))
         conn.commit()
     return posted
+
+
+def list_closing_periods(business_id: int) -> list[dict[str, Any]]:
+    with get_db() as conn:
+        _require_business(conn, business_id)
+        rows = conn.execute(
+            "SELECT * FROM closing_periods WHERE business_id = ? ORDER BY period_end DESC",
+            (business_id,),
+        ).fetchall()
+        return [row_to_dict(row) for row in rows]
+
+
+def _is_period_closed(conn, business_id: int, entry_date: str) -> bool:
+    row = conn.execute(
+        "SELECT id FROM closing_periods WHERE business_id = ? AND ? >= period_start AND ? <= period_end",
+        (business_id, entry_date, entry_date),
+    ).fetchone()
+    return row is not None
+
+
+def close_period(data: dict[str, Any]) -> dict[str, Any]:
+    try:
+        business_id = int(data.get("business_id"))
+    except (TypeError, ValueError):
+        raise ValueError("business_id is required")
+    period_start = _date(data.get("period_start"), "period_start")
+    period_end = _date(data.get("period_end"), "period_end")
+    if period_end < period_start:
+        raise ValueError("period_end cannot be before period_start")
+    notes = str(data.get("notes", "")).strip()
+    closed_by = str(data.get("closed_by", "")).strip()
+    now = now_utc()
+    with get_db() as conn:
+        _require_business(conn, business_id)
+        # Check for overlapping closed periods
+        overlap = conn.execute(
+            "SELECT id FROM closing_periods WHERE business_id = ? AND (? < period_end AND ? > period_start)",
+            (business_id, period_start, period_end),
+        ).fetchone()
+        if overlap:
+            raise ValueError("Period overlaps with an existing closed period")
+        try:
+            cursor = conn.execute(
+                "INSERT INTO closing_periods (business_id, period_start, period_end, closed_by, closed_at, notes) VALUES (?, ?, ?, ?, ?, ?)",
+                (business_id, period_start, period_end, closed_by, now, notes),
+            )
+        except sqlite3.IntegrityError:
+            raise ValueError("Period already closed")
+        conn.commit()
+        return row_to_dict(conn.execute("SELECT * FROM closing_periods WHERE id = ?", (cursor.lastrowid,)).fetchone())
+
+
+def reopen_period(period_id: int) -> None:
+    with get_db() as conn:
+        row = conn.execute("SELECT id FROM closing_periods WHERE id = ?", (period_id,)).fetchone()
+        if row is None:
+            raise ValueError("Closing period not found")
+        conn.execute("DELETE FROM closing_periods WHERE id = ?", (period_id,))
+        conn.commit()
+
+
+def is_period_closed(business_id: int, entry_date: str) -> dict[str, Any]:
+    entry_date = _date(entry_date, "entry_date")
+    with get_db() as conn:
+        _require_business(conn, business_id)
+        return {"entry_date": entry_date, "closed": _is_period_closed(conn, business_id, entry_date)}
