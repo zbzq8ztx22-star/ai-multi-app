@@ -221,6 +221,78 @@ CREATE INDEX IF NOT EXISTS idx_accounts_business ON accounts(business_id, code);
 CREATE INDEX IF NOT EXISTS idx_entries_business_date ON journal_entries(business_id, entry_date);
 CREATE INDEX IF NOT EXISTS idx_lines_entry ON journal_lines(entry_id);
 CREATE INDEX IF NOT EXISTS idx_lines_account ON journal_lines(account_id);
+
+CREATE TABLE IF NOT EXISTS accounting_contacts (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    business_id INTEGER NOT NULL,
+    name TEXT NOT NULL,
+    contact_type TEXT NOT NULL CHECK(contact_type IN ('customer', 'vendor', 'both')),
+    email TEXT NOT NULL DEFAULT '',
+    phone TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    FOREIGN KEY (business_id) REFERENCES businesses(id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS invoices (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    business_id INTEGER NOT NULL,
+    customer_id INTEGER NOT NULL,
+    invoice_number TEXT NOT NULL,
+    issue_date TEXT NOT NULL,
+    due_date TEXT NOT NULL,
+    description TEXT NOT NULL,
+    amount REAL NOT NULL CHECK(amount > 0),
+    amount_paid REAL NOT NULL DEFAULT 0 CHECK(amount_paid >= 0),
+    status TEXT NOT NULL DEFAULT 'open' CHECK(status IN ('open', 'paid', 'void')),
+    receivable_account_id INTEGER NOT NULL,
+    revenue_account_id INTEGER NOT NULL,
+    journal_entry_id INTEGER NOT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    UNIQUE(business_id, invoice_number),
+    FOREIGN KEY (business_id) REFERENCES businesses(id) ON DELETE CASCADE,
+    FOREIGN KEY (customer_id) REFERENCES accounting_contacts(id),
+    FOREIGN KEY (receivable_account_id) REFERENCES accounts(id),
+    FOREIGN KEY (revenue_account_id) REFERENCES accounts(id),
+    FOREIGN KEY (journal_entry_id) REFERENCES journal_entries(id)
+);
+
+CREATE TABLE IF NOT EXISTS invoice_payments (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    invoice_id INTEGER NOT NULL,
+    payment_date TEXT NOT NULL,
+    amount REAL NOT NULL CHECK(amount > 0),
+    cash_account_id INTEGER NOT NULL,
+    journal_entry_id INTEGER NOT NULL,
+    created_at TEXT NOT NULL,
+    FOREIGN KEY (invoice_id) REFERENCES invoices(id) ON DELETE CASCADE,
+    FOREIGN KEY (cash_account_id) REFERENCES accounts(id),
+    FOREIGN KEY (journal_entry_id) REFERENCES journal_entries(id)
+);
+
+CREATE TABLE IF NOT EXISTS expenses (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    business_id INTEGER NOT NULL,
+    vendor_id INTEGER,
+    expense_date TEXT NOT NULL,
+    reference TEXT NOT NULL DEFAULT '',
+    description TEXT NOT NULL,
+    amount REAL NOT NULL CHECK(amount > 0),
+    expense_account_id INTEGER NOT NULL,
+    payment_account_id INTEGER NOT NULL,
+    journal_entry_id INTEGER NOT NULL,
+    created_at TEXT NOT NULL,
+    FOREIGN KEY (business_id) REFERENCES businesses(id) ON DELETE CASCADE,
+    FOREIGN KEY (vendor_id) REFERENCES accounting_contacts(id),
+    FOREIGN KEY (expense_account_id) REFERENCES accounts(id),
+    FOREIGN KEY (payment_account_id) REFERENCES accounts(id),
+    FOREIGN KEY (journal_entry_id) REFERENCES journal_entries(id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_contacts_business ON accounting_contacts(business_id, name);
+CREATE INDEX IF NOT EXISTS idx_invoices_business ON invoices(business_id, issue_date);
+CREATE INDEX IF NOT EXISTS idx_expenses_business ON expenses(business_id, expense_date);
 """
 
 

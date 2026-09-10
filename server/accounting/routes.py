@@ -77,3 +77,63 @@ def ledger() -> Any:
         return jsonify(service.general_ledger(business_id, account_id))
     except ValueError as exc:
         return jsonify({"error": str(exc)}), 400
+
+
+@bp.route("/contacts", methods=["GET"])
+@login_required
+def contacts() -> Any:
+    business_id = request.args.get("business_id", type=int)
+    if business_id is None:
+        return jsonify({"error": "business_id is required"}), 400
+    try:
+        return jsonify(service.list_contacts(business_id))
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+
+
+@bp.route("/contacts", methods=["POST"])
+@admin_required
+def create_contact() -> Any:
+    return _json_write(service.create_contact)
+
+
+@bp.route("/invoices", methods=["GET"])
+@login_required
+def invoices() -> Any:
+    business_id = request.args.get("business_id", type=int)
+    if business_id is None:
+        return jsonify({"error": "business_id is required"}), 400
+    try:
+        return jsonify(service.list_invoices(business_id))
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+
+
+@bp.route("/invoices", methods=["POST"])
+@admin_required
+def create_invoice() -> Any:
+    return _json_write(service.create_invoice)
+
+
+@bp.route("/payments", methods=["POST"])
+@admin_required
+def create_payment() -> Any:
+    return _json_write(service.record_payment)
+
+
+@bp.route("/expenses", methods=["GET"])
+@login_required
+def expenses() -> Any:
+    business_id = request.args.get("business_id", type=int)
+    if business_id is None:
+        return jsonify({"error": "business_id is required"}), 400
+    try:
+        return jsonify(service.list_expenses(business_id))
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+
+
+@bp.route("/expenses", methods=["POST"])
+@admin_required
+def create_expense() -> Any:
+    return _json_write(service.create_expense)

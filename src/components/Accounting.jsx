@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { BarChart3, BookOpen, Building2, Plus, RefreshCw } from 'lucide-react'
 import { apiGet, apiPost } from '../api'
+import AccountingOperations from './AccountingOperations'
 
 const EMPTY_BUSINESS = { legal_name: '', dba_name: '', entity_type: 'llc', ein_last4: '', formation_state: '', fiscal_year_end: '12-31', accounting_method: 'cash' }
 const EMPTY_ACCOUNT = { code: '', name: '', account_type: 'asset' }
@@ -77,6 +78,8 @@ export default function Accounting() {
 
           <form onSubmit={submitEntry} className="card space-y-4"><h2 className="text-lg font-semibold">New journal entry</h2><div className="grid grid-cols-3 gap-3"><input className="input-field" type="date" required value={entryForm.entry_date} onChange={e => setEntryForm({ ...entryForm, entry_date: e.target.value })} /><input className="input-field" placeholder="Reference" value={entryForm.reference} onChange={e => setEntryForm({ ...entryForm, reference: e.target.value })} /><input className="input-field" required placeholder="Description" value={entryForm.description} onChange={e => setEntryForm({ ...entryForm, description: e.target.value })} /></div>{entryForm.lines.map((line, index) => <div key={index} className="grid grid-cols-3 gap-3"><select className="input-field" required value={line.account_id} onChange={e => updateLine(index, 'account_id', e.target.value)}><option value="">Account</option>{accounts.map(a => <option key={a.id} value={a.id}>{a.code} · {a.name}</option>)}</select><input className="input-field" type="number" min="0" step="0.01" placeholder="Debit" value={line.debit} onChange={e => updateLine(index, 'debit', e.target.value)} /><input className="input-field" type="number" min="0" step="0.01" placeholder="Credit" value={line.credit} onChange={e => updateLine(index, 'credit', e.target.value)} /></div>)}<div className="flex gap-2"><button type="button" className="btn-secondary" onClick={addLine}>Add line</button><button className="btn-primary" disabled={accounts.length < 2}>Post balanced entry</button></div></form>
         </div>
+
+        <AccountingOperations businessId={businessId} accounts={accounts} onPosted={() => loadAccounting(businessId)} />
 
         <div className="card"><h2 className="text-lg font-semibold flex items-center gap-2 mb-4"><BarChart3 size={20} /> Trial balance</h2>{trialBalance && <><div className="overflow-x-auto"><table className="w-full text-sm"><thead><tr className="text-left text-gray-400 border-b border-gray-700"><th className="py-2">Account</th><th>Type</th><th className="text-right">Debits</th><th className="text-right">Credits</th></tr></thead><tbody>{trialBalance.accounts.map(a => <tr key={a.id} className="border-b border-gray-800"><td className="py-2">{a.code} · {a.name}</td><td className="capitalize">{a.account_type}</td><td className="text-right">{money(a.debits)}</td><td className="text-right">{money(a.credits)}</td></tr>)}</tbody><tfoot><tr className="font-bold"><td className="pt-3" colSpan="2">Totals</td><td className="pt-3 text-right">{money(trialBalance.total_debits)}</td><td className="pt-3 text-right">{money(trialBalance.total_credits)}</td></tr></tfoot></table></div><p className={`mt-3 ${trialBalance.balanced ? 'text-green-400' : 'text-red-400'}`}>{trialBalance.balanced ? 'Books are balanced' : 'Books are out of balance'}</p></>}</div>
 
