@@ -698,3 +698,133 @@ def financial_kpis(business_id: int, start_date: str, end_date: str) -> dict[str
         "total_revenue": total_revenue,
         "net_income": net_income,
     }
+
+
+def cash_flow_statement(business_id: int, start_date: str, end_date: str) -> dict[str, Any]:
+    """Indirect-method cash flow statement from posted entries.
+
+    Operating activities start from net income and adjust for non-cash
+    items by comparing period changes in asset/liability accounts.
+    Investing and financing activities are approximated from changes in
+    equity and liability accounts. Cash is the sum of asset account
+    balances at the period end minus the start.
+    """
+    start_date = _date(start_date, "start_date")
+    end_date = _date(end_date, "end_date")
+    if end_date < start_date:
+        raise ValueError("end_date cannot be before start_date")
+
+    with get_db() as conn:
+        _require_business(conn, business_id)
+        # Period balances (for P&L)
+        period_balances = _account_balances(conn, business_id, end_date, start_date)
+        # Balances at start (for beginning cash)
+        pre_start = (datetime.date.fromisoformat(start_date) - datetime.timedelta(days=1)).isoformat()
+        start_balances = _account_balances(conn, business_id, pre_start) if pre_start >= "1900-01-01" else []
+        # Balances at end (for ending cash)
+        end_balances = _account_balances(conn, business_id, end_date)
+
+    def _net(balances, account_type, sign="credit"):
+        total = 0.0
+        for row in balances:
+            if row["account_type"] == account_type:
+                if sign == "credit":
+                    total += row["credits"] - row["debits"]
+                else:
+                    total += row["debits"] - row["credits"]
+        return round(total, 2)
+
+    # Net income from P&L
+    revenue_total = round(sum(max(0, row["credits"] - row["debits"]) for row in period_balances if row["account_type"] == "revenue"), 2)
+    expense_total = round(sum(max(0, row["debits"] - row["credits"]) for row in period_balances if row["account_type"] == "expense"), 2)
+    net_income = round(revenue_total - expense_total, 2)
+
+    # Cash accounts = all asset accounts (simplified: all assets treated as cash-equivalent for this report)
+    def _cash_total(balances):
+        return round(sum(row["debits"] - row["credits"] for row in balances if row["account_type"] == "asset"), 2)
+
+    beginning_cash = _cash_total(start_balances)
+    ending_cash = _cash_total(end_balances)
+
+    # Changes in non-cash assets (operating adjustments)
+    start_assets_non_cash = round(sum(row["debits"] - row["credits"] for row in start_balances if row["account_type"] == "asset"), 2)
+    end_assets_non_cash = round(sum(row["debits"] - row["credits"] for row in end_balances if row["account_type"] == "asset"), 2)
+    change_in_assets = round(end_assets_non_cash - start_assets_non_cash, 2)
+
+    # Changes in liabilities (operating adjustments)
+    start_liabilities = round(sum(row["credits"] - row["debits"] for row in start_balances if row["account_type"] == "liability"), 2)
+    end_liabilities = round(sum(row["credits"] - row["debits"] for row in end_balances if row["account_type"] == "liability"), 2)
+    change_in_liabilities = round(end_liabilities - start_liabilities, 2)
+
+    # Changes in equity (financing)
+    start_equity = round(sum(row["credits"] - row["debits"] for row in start_balances if row["account_type"] == "equity"), 2)
+    end_equity = round(sum(row["credits"] - row["debits"] for row in end_balances if row["account_type"] == "equity"), 2)
+    change_in_equity = round(end_equity - start_equity, 2)
+
+    operating_adjustments = round(-change_in_assets + change_in_liabilities, 2)
+    operating_cash_flow = round(net_income + operating_adjustments, 2)
+    investing_cash_flow = round(change_in_assets, 2)  # simplified
+    financing_cash_flow = round(change_in_equity + change_in_liabilities, 2)  # simplified
+    net_change = round(operating_cash_flow + investing_cash_flow + financing_cash_flow, 2)
+
+    return {
+        "start_date": start_date,
+        "end_date": end_date,
+        "operating": {
+            "net_income": net_income,
+            "change_in_assets": -change_in_assets,
+            "change_in_liabilities": change_in_liabilities,
+            "net_cash": operating_cash_flow,
+        },
+        "investing": {
+            "net_cash": investing_cash_flow,
+        },
+        "financing": {
+            "change_in_equity": change_in_equity,
+            "change_in_liabilities": change_in_liabilities,
+            "net_cash": financing_cash_flow,
+        },
+        "beginning_cash": beginning_cash,
+        "ending_cash": ending_cash,
+        "net_change_in_cash": round(ending_cash - beginning_cash, 2),
+    }
+
+
+def expense_breakdown(business_id: int, start_date: str, end_date: str) -> dict[str, Any]:
+    """Break down expenses by account for the period."""
+    pl = profit_and_loss(business_id, start_date, end_date)
+    expenses = pl["expenses"]
+    total = pl["total_expenses"]
+    breakdown = []
+    for exp in expenses:
+        pct = round((exp["amount"] / total) * 100, 2) if total > 0 else 0
+        breakdown.append({
+            "account_id": exp["id"],
+            "account_code": exp["code"],
+            "account_name": exp["name"],
+            "amount": exp["amount"],
+            "percentage": pct,
+        })
+    breakdown.sort(key=lambda x: x["amount"], reverse=True)
+    return {
+        "start_date": pl["start_date"],
+        "end_date": pl["end_date"],
+        "total_expenses": total,
+        "breakdown": breakdown,
+    }
+
+
+def multi_year_comparison(business_id: int, years: list[int]) -> dict[str, Any]:
+    """Compare P&L across multiple years."""
+    results = []
+    for year in years:
+        start = f"{year}-01-01"
+        end = f"{year}-12-31"
+        pl = profit_and_loss(business_id, start, end)
+        results.append({
+            "year": year,
+            "total_revenue": pl["total_revenue"],
+            "total_expenses": pl["total_expenses"],
+            "net_income": pl["net_income"],
+        })
+    return {"years": results}

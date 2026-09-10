@@ -292,3 +292,50 @@ def kpis() -> Any:
         return jsonify(service.financial_kpis(business_id, start_date, end_date))
     except ValueError as exc:
         return jsonify({"error": str(exc)}), 400
+
+
+@bp.route("/reports/cash-flow", methods=["GET"])
+@login_required
+def cash_flow() -> Any:
+    business_id = request.args.get("business_id", type=int)
+    start_date = request.args.get("start_date", "")
+    end_date = request.args.get("end_date", "")
+    if business_id is None:
+        return jsonify({"error": "business_id is required"}), 400
+    try:
+        return jsonify(service.cash_flow_statement(business_id, start_date, end_date))
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+
+
+@bp.route("/reports/expense-breakdown", methods=["GET"])
+@login_required
+def expense_breakdown() -> Any:
+    business_id = request.args.get("business_id", type=int)
+    start_date = request.args.get("start_date", "")
+    end_date = request.args.get("end_date", "")
+    if business_id is None:
+        return jsonify({"error": "business_id is required"}), 400
+    try:
+        return jsonify(service.expense_breakdown(business_id, start_date, end_date))
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+
+
+@bp.route("/reports/multi-year", methods=["GET"])
+@login_required
+def multi_year() -> Any:
+    business_id = request.args.get("business_id", type=int)
+    years_str = request.args.get("years", "")
+    if business_id is None:
+        return jsonify({"error": "business_id is required"}), 400
+    try:
+        years = [int(y.strip()) for y in years_str.split(",") if y.strip()]
+    except ValueError:
+        return jsonify({"error": "years must be comma-separated integers"}), 400
+    if not years or len(years) > 10:
+        return jsonify({"error": "Provide 1-10 years"}), 400
+    try:
+        return jsonify(service.multi_year_comparison(business_id, years))
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
