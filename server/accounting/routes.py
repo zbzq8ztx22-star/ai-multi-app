@@ -232,3 +232,29 @@ def budget_vs_actual() -> Any:
         return jsonify(service.budget_vs_actual(business_id, fiscal_year))
     except ValueError as exc:
         return jsonify({"error": str(exc)}), 400
+
+
+@bp.route("/reports/ar-aging", methods=["GET"])
+@login_required
+def ar_aging() -> Any:
+    business_id = request.args.get("business_id", type=int)
+    if business_id is None:
+        return jsonify({"error": "business_id is required"}), 400
+    as_of = request.args.get("as_of")
+    try:
+        return jsonify(service.accounts_receivable_aging(business_id, as_of))
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+
+
+@bp.route("/reports/ap-aging", methods=["GET"])
+@login_required
+def ap_aging() -> Any:
+    business_id = request.args.get("business_id", type=int)
+    if business_id is None:
+        return jsonify({"error": "business_id is required"}), 400
+    as_of = request.args.get("as_of")
+    try:
+        return jsonify(service.accounts_payable_aging(business_id, as_of))
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400

@@ -551,3 +551,108 @@ def budget_vs_actual(business_id: int, fiscal_year: int) -> dict[str, Any]:
         "total_actual": total_actual,
         "total_variance": round(total_budgeted - total_actual, 2),
     }
+
+
+def _aging_bucket(days_overdue: int) -> str:
+    if days_overdue < 0:
+        return "current"
+    if days_overdue < 30:
+        return "1-30"
+    if days_overdue < 60:
+        return "31-60"
+    if days_overdue < 90:
+        return "61-90"
+    return "90+"
+
+
+AGING_BUCKETS = ["current", "1-30", "31-60", "61-90", "90+"]
+
+
+def accounts_receivable_aging(business_id: int, as_of: str | None = None) -> dict[str, Any]:
+    """AR aging: outstanding invoice balances bucketed by days overdue."""
+    if as_of:
+        as_of = _date(as_of, "as_of")
+    else:
+        as_of = datetime.date.today().isoformat()
+    with get_db() as conn:
+        _require_business(conn, business_id)
+        rows = conn.execute(
+            """SELECT invoices.id, invoices.invoice_number, invoices.issue_date, invoices.due_date,
+               invoices.amount, invoices.amount_paid, invoices.status,
+               accounting_contacts.name AS customer_name
+               FROM invoices JOIN accounting_contacts ON accounting_contacts.id = invoices.customer_id
+               WHERE invoices.business_id = ? AND invoices.status = 'open'
+               ORDER BY invoices.due_date""",
+            (business_id,),
+        ).fetchall()
+    as_of_date = datetime.date.fromisoformat(as_of)
+    lines = []
+    totals = {bucket: 0.0 for bucket in AGING_BUCKETS}
+    for row in rows:
+        balance = round(row["amount"] - row["amount_paid"], 2)
+        if balance <= 0:
+            continue
+        due = datetime.date.fromisoformat(row["due_date"])
+        days_overdue = (as_of_date - due).days
+        bucket = _aging_bucket(days_overdue)
+        totals[bucket] = round(totals[bucket] + balance, 2)
+        lines.append({
+            "invoice_id": row["id"],
+            "invoice_number": row["invoice_number"],
+            "customer_name": row["customer_name"],
+            "issue_date": row["issue_date"],
+            "due_date": row["due_date"],
+            "amount": row["amount"],
+            "amount_paid": row["amount_paid"],
+            "balance": balance,
+            "days_overdue": days_overdue,
+            "bucket": bucket,
+        })
+    return {"as_of": as_of, "lines": lines, "totals": totals, "total_outstanding": round(sum(totals.values()), 2)}
+
+
+def accounts_payable_aging(business_id: int, as_of: str | None = None) -> dict[str, Any]:
+    """AP aging: outstanding expense balances bucketed by days overdue.
+
+    Expenses are recorded as paid immediately (debit expense, credit cash/AP),
+    so this report tracks expenses that were credited to a liability account
+    (Accounts Payable) rather than an asset account (Cash/Bank).
+    """
+    if as_of:
+        as_of = _date(as_of, "as_of")
+    else:
+        as_of = datetime.date.today().isoformat()
+    with get_db() as conn:
+        _require_business(conn, business_id)
+        rows = conn.execute(
+            """SELECT expenses.id, expenses.expense_date, expenses.reference, expenses.description,
+               expenses.amount, expenses.payment_account_id, expenses.vendor_id,
+               accounting_contacts.name AS vendor_name,
+               accounts.account_type AS payment_account_type
+               FROM expenses LEFT JOIN accounting_contacts ON accounting_contacts.id = expenses.vendor_id
+               JOIN accounts ON accounts.id = expenses.payment_account_id
+               WHERE expenses.business_id = ?
+               ORDER BY expenses.expense_date""",
+            (business_id,),
+        ).fetchall()
+    as_of_date = datetime.date.fromisoformat(as_of)
+    lines = []
+    totals = {bucket: 0.0 for bucket in AGING_BUCKETS}
+    for row in rows:
+        if row["payment_account_type"] != "liability":
+            continue
+        expense_date = datetime.date.fromisoformat(row["expense_date"])
+        days_overdue = (as_of_date - expense_date).days
+        bucket = _aging_bucket(days_overdue)
+        totals[bucket] = round(totals[bucket] + row["amount"], 2)
+        lines.append({
+            "expense_id": row["id"],
+            "reference": row["reference"],
+            "description": row["description"],
+            "vendor_name": row["vendor_name"] or "",
+            "expense_date": row["expense_date"],
+            "amount": row["amount"],
+            "days_overdue": days_overdue,
+            "bucket": bucket,
+        })
+    return {"as_of": as_of, "lines": lines, "totals": totals, "total_outstanding": round(sum(totals.values()), 2)}
