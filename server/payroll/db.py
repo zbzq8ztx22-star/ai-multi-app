@@ -368,6 +368,34 @@ CREATE TABLE IF NOT EXISTS recurring_expenses (
 
 CREATE INDEX IF NOT EXISTS idx_recurring_expenses_business ON recurring_expenses(business_id, active);
 CREATE INDEX IF NOT EXISTS idx_recurring_expenses_next_date ON recurring_expenses(next_date, active);
+
+CREATE TABLE IF NOT EXISTS currencies (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    business_id INTEGER NOT NULL,
+    code TEXT NOT NULL,
+    name TEXT NOT NULL,
+    symbol TEXT NOT NULL DEFAULT '$',
+    is_base INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL,
+    FOREIGN KEY (business_id) REFERENCES businesses(id) ON DELETE CASCADE,
+    UNIQUE(business_id, code)
+);
+
+CREATE TABLE IF NOT EXISTS exchange_rates (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    business_id INTEGER NOT NULL,
+    from_currency_id INTEGER NOT NULL,
+    to_currency_id INTEGER NOT NULL,
+    rate REAL NOT NULL CHECK(rate > 0),
+    rate_date TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    FOREIGN KEY (business_id) REFERENCES businesses(id) ON DELETE CASCADE,
+    FOREIGN KEY (from_currency_id) REFERENCES currencies(id) ON DELETE CASCADE,
+    FOREIGN KEY (to_currency_id) REFERENCES currencies(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_currencies_business ON currencies(business_id, code);
+CREATE INDEX IF NOT EXISTS idx_exchange_rates_business ON exchange_rates(business_id, rate_date);
 """
 
 

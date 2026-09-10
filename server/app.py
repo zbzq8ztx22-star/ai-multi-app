@@ -26,6 +26,7 @@ from accounting import init_app as init_accounting
 from audit import init_app as init_audit
 from auth import init_auth, login_required
 from backup import init_app as init_backup
+from currency import init_app as init_currency
 from dashboard import init_app as init_dashboard
 from entities import init_app as init_entities
 from payroll import init_app as init_payroll
@@ -510,6 +511,7 @@ def create_app(test_config: dict[str, Any] | None = None) -> Flask:
     init_dashboard(app)
     init_audit(app)
     init_backup(app)
+    init_currency(app)
     return app
 
 
