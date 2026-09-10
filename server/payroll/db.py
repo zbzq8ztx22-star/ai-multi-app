@@ -325,6 +325,24 @@ CREATE TABLE IF NOT EXISTS audit_log (
 
 CREATE INDEX IF NOT EXISTS idx_audit_log_created ON audit_log(created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_audit_log_module ON audit_log(module);
+
+CREATE TABLE IF NOT EXISTS reconciliations (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    business_id INTEGER NOT NULL,
+    account_id INTEGER NOT NULL,
+    statement_date TEXT NOT NULL,
+    statement_balance REAL NOT NULL,
+    book_balance REAL NOT NULL,
+    difference REAL NOT NULL DEFAULT 0,
+    status TEXT NOT NULL DEFAULT 'open' CHECK(status IN ('open', 'reconciled', 'discrepancy')),
+    notes TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    FOREIGN KEY (business_id) REFERENCES businesses(id) ON DELETE CASCADE,
+    FOREIGN KEY (account_id) REFERENCES accounts(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_reconciliations_business ON reconciliations(business_id, statement_date);
 """
 
 

@@ -339,3 +339,43 @@ def multi_year() -> Any:
         return jsonify(service.multi_year_comparison(business_id, years))
     except ValueError as exc:
         return jsonify({"error": str(exc)}), 400
+
+
+@bp.route("/reconciliations", methods=["GET"])
+@login_required
+def reconciliations() -> Any:
+    business_id = request.args.get("business_id", type=int)
+    if business_id is None:
+        return jsonify({"error": "business_id is required"}), 400
+    try:
+        return jsonify(service.list_reconciliations(business_id))
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+
+
+@bp.route("/reconciliations", methods=["POST"])
+@admin_required
+def create_reconciliation() -> Any:
+    return _json_write(service.create_reconciliation)
+
+
+@bp.route("/reconciliations/<int:reconciliation_id>", methods=["PUT"])
+@admin_required
+def update_reconciliation(reconciliation_id: int) -> Any:
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict):
+        return jsonify({"error": "Request body must be JSON"}), 400
+    try:
+        return jsonify(service.update_reconciliation(reconciliation_id, data))
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+
+
+@bp.route("/reconciliations/<int:reconciliation_id>", methods=["DELETE"])
+@admin_required
+def delete_reconciliation(reconciliation_id: int) -> Any:
+    try:
+        service.delete_reconciliation(reconciliation_id)
+        return jsonify({"deleted": True})
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400

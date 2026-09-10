@@ -828,3 +828,81 @@ def multi_year_comparison(business_id: int, years: list[int]) -> dict[str, Any]:
             "net_income": pl["net_income"],
         })
     return {"years": results}
+
+
+RECONCILIATION_STATUSES = {"open", "reconciled", "discrepancy"}
+
+
+def list_reconciliations(business_id: int) -> list[dict[str, Any]]:
+    with get_db() as conn:
+        _require_business(conn, business_id)
+        rows = conn.execute(
+            """SELECT reconciliations.*, accounts.code AS account_code, accounts.name AS account_name
+            FROM reconciliations JOIN accounts ON accounts.id = reconciliations.account_id
+            WHERE reconciliations.business_id = ? ORDER BY statement_date DESC, id DESC""",
+            (business_id,),
+        ).fetchall()
+        return [row_to_dict(row) for row in rows]
+
+
+def create_reconciliation(data: dict[str, Any]) -> dict[str, Any]:
+    try:
+        business_id = int(data.get("business_id"))
+    except (TypeError, ValueError):
+        raise ValueError("business_id is required")
+    try:
+        account_id = int(data.get("account_id"))
+    except (TypeError, ValueError):
+        raise ValueError("account_id is required")
+    statement_date = _date(data.get("statement_date"), "statement_date")
+    statement_balance = _money(data.get("statement_balance"), "statement_balance")
+    notes = str(data.get("notes", "")).strip()
+    now = now_utc()
+    with get_db() as conn:
+        _require_business(conn, business_id)
+        account = conn.execute("SELECT account_type FROM accounts WHERE id = ? AND business_id = ? AND active = 1", (account_id, business_id)).fetchone()
+        if account is None:
+            raise ValueError("Account not found for this business")
+        # Compute book balance from posted entries up to statement_date
+        balances = _account_balances(conn, business_id, statement_date)
+        acct_balance = next((row for row in balances if row["id"] == account_id), None)
+        if acct_balance is None:
+            book_balance = 0.0
+        elif account["account_type"] in ("asset", "expense"):
+            book_balance = round(acct_balance["debits"] - acct_balance["credits"], 2)
+        else:
+            book_balance = round(acct_balance["credits"] - acct_balance["debits"], 2)
+        difference = round(statement_balance - book_balance, 2)
+        status = "reconciled" if abs(difference) < 0.005 else "discrepancy"
+        cursor = conn.execute(
+            "INSERT INTO reconciliations (business_id, account_id, statement_date, statement_balance, book_balance, difference, status, notes, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (business_id, account_id, statement_date, statement_balance, book_balance, difference, status, notes, now, now),
+        )
+        conn.commit()
+        return row_to_dict(conn.execute("SELECT * FROM reconciliations WHERE id = ?", (cursor.lastrowid,)).fetchone())
+
+
+def update_reconciliation(reconciliation_id: int, data: dict[str, Any]) -> dict[str, Any]:
+    notes = str(data.get("notes", "")).strip()
+    status = str(data.get("status", "")).strip().lower()
+    if status and status not in RECONCILIATION_STATUSES:
+        raise ValueError("Invalid status")
+    now = now_utc()
+    with get_db() as conn:
+        row = conn.execute("SELECT * FROM reconciliations WHERE id = ?", (reconciliation_id,)).fetchone()
+        if row is None:
+            raise ValueError("Reconciliation not found")
+        if status:
+            conn.execute("UPDATE reconciliations SET status = ?, notes = ?, updated_at = ? WHERE id = ?", (status, notes, now, reconciliation_id))
+        else:
+            conn.execute("UPDATE reconciliations SET notes = ?, updated_at = ? WHERE id = ?", (notes, now, reconciliation_id))
+        conn.commit()
+        return row_to_dict(conn.execute("SELECT * FROM reconciliations WHERE id = ?", (reconciliation_id,)).fetchone())
+
+
+def delete_reconciliation(reconciliation_id: int) -> None:
+    with get_db() as conn:
+        if conn.execute("SELECT id FROM reconciliations WHERE id = ?", (reconciliation_id,)).fetchone() is None:
+            raise ValueError("Reconciliation not found")
+        conn.execute("DELETE FROM reconciliations WHERE id = ?", (reconciliation_id,))
+        conn.commit()
