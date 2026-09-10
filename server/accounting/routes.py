@@ -1,12 +1,24 @@
 from typing import Any, Callable
 
-from flask import Blueprint, jsonify, request, session
+from flask import Blueprint, Response, jsonify, request, session
 
 from audit import service as audit_service
 from auth import admin_required, login_required
 from . import service
 
 bp = Blueprint("accounting", __name__, url_prefix="/api/accounting")
+
+
+def _csv_response(rows: list[list[Any]], filename: str) -> Response:
+    import io
+    import csv
+    output = io.StringIO()
+    writer = csv.writer(output)
+    for row in rows:
+        writer.writerow(row)
+    resp = Response(output.getvalue(), mimetype="text/csv")
+    resp.headers["Content-Disposition"] = f'attachment; filename="{filename}"'
+    return resp
 
 
 def _current_user() -> dict[str, Any] | None:
@@ -379,3 +391,91 @@ def delete_reconciliation(reconciliation_id: int) -> Any:
         return jsonify({"deleted": True})
     except ValueError as exc:
         return jsonify({"error": str(exc)}), 400
+
+
+@bp.route("/export/profit-loss.csv", methods=["GET"])
+@login_required
+def export_profit_loss() -> Any:
+    business_id = request.args.get("business_id", type=int)
+    start_date = request.args.get("start_date", "")
+    end_date = request.args.get("end_date", "")
+    if business_id is None:
+        return jsonify({"error": "business_id is required"}), 400
+    try:
+        pl = service.profit_and_loss(business_id, start_date, end_date)
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    rows = [["Profit & Loss", f"{pl['start_date']} to {pl['end_date']}"]]
+    rows.append([])
+    rows.append(["Section", "Account Code", "Account Name", "Amount"])
+    for r in pl["revenue"]:
+        rows.append(["Revenue", r["code"], r["name"], r["amount"]])
+    rows.append(["", "", "Total Revenue", pl["total_revenue"]])
+    for r in pl["expenses"]:
+        rows.append(["Expense", r["code"], r["name"], r["amount"]])
+    rows.append(["", "", "Total Expenses", pl["total_expenses"]])
+    rows.append(["", "", "Net Income", pl["net_income"]])
+    return _csv_response(rows, "profit-loss.csv")
+
+
+@bp.route("/export/balance-sheet.csv", methods=["GET"])
+@login_required
+def export_balance_sheet() -> Any:
+    business_id = request.args.get("business_id", type=int)
+    as_of = request.args.get("as_of", "")
+    if business_id is None:
+        return jsonify({"error": "business_id is required"}), 400
+    try:
+        bs = service.balance_sheet(business_id, as_of)
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    rows = [["Balance Sheet", f"As of {bs['as_of']}"]]
+    rows.append([])
+    rows.append(["Section", "Account Code", "Account Name", "Amount"])
+    for r in bs["assets"]:
+        rows.append(["Asset", r["code"], r["name"], r["amount"]])
+    rows.append(["", "", "Total Assets", bs["total_assets"]])
+    for r in bs["liabilities"]:
+        rows.append(["Liability", r["code"], r["name"], r["amount"]])
+    rows.append(["", "", "Total Liabilities", bs["total_liabilities"]])
+    for r in bs["equity"]:
+        rows.append(["Equity", r["code"], r["name"], r["amount"]])
+    rows.append(["", "", "Current Earnings", bs["current_earnings"]])
+    rows.append(["", "", "Total Equity", bs["total_equity"]])
+    rows.append(["", "", "Balanced", "Yes" if bs["balanced"] else "No"])
+    return _csv_response(rows, "balance-sheet.csv")
+
+
+@bp.route("/export/trial-balance.csv", methods=["GET"])
+@login_required
+def export_trial_balance() -> Any:
+    business_id = request.args.get("business_id", type=int)
+    if business_id is None:
+        return jsonify({"error": "business_id is required"}), 400
+    try:
+        tb = service.trial_balance(business_id)
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    rows = [["Account Code", "Account Name", "Type", "Debits", "Credits"]]
+    for a in tb["accounts"]:
+        rows.append([a["code"], a["name"], a["account_type"], a["debits"], a["credits"]])
+    rows.append(["", "", "Totals", tb["total_debits"], tb["total_credits"]])
+    rows.append(["", "", "Balanced", "", "Yes" if tb["balanced"] else "No"])
+    return _csv_response(rows, "trial-balance.csv")
+
+
+@bp.route("/export/general-ledger.csv", methods=["GET"])
+@login_required
+def export_general_ledger() -> Any:
+    business_id = request.args.get("business_id", type=int)
+    account_id = request.args.get("account_id", type=int)
+    if business_id is None:
+        return jsonify({"error": "business_id is required"}), 400
+    try:
+        ledger = service.general_ledger(business_id, account_id)
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    rows = [["Date", "Reference", "Description", "Account Code", "Account Name", "Line Description", "Debit", "Credit"]]
+    for line in ledger:
+        rows.append([line["entry_date"], line["reference"], line["entry_description"], line["account_code"], line["account_name"], line["description"], line["debit"], line["credit"]])
+    return _csv_response(rows, "general-ledger.csv")
