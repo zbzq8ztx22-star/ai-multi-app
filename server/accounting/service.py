@@ -339,3 +339,82 @@ def create_expense(data: dict[str, Any]) -> dict[str, Any]:
             (business_id, vendor_id, expense_date, reference, description, amount, expense_account, payment_account, entry_id, now))
         conn.commit()
         return row_to_dict(conn.execute("SELECT * FROM expenses WHERE id = ?", (cursor.lastrowid,)).fetchone())
+
+
+def _account_balances(conn: sqlite3.Connection, business_id: int, end_date: str, start_date: str | None = None) -> list[dict[str, Any]]:
+    conditions = ["accounts.business_id = ?", "journal_entries.status = 'posted'", "journal_entries.entry_date <= ?"]
+    params: list[Any] = [business_id, end_date]
+    if start_date:
+        conditions.append("journal_entries.entry_date >= ?")
+        params.append(start_date)
+    rows = conn.execute(
+        f"""SELECT accounts.id, accounts.code, accounts.name, accounts.account_type,
+        ROUND(COALESCE(SUM(journal_lines.debit), 0), 2) AS debits,
+        ROUND(COALESCE(SUM(journal_lines.credit), 0), 2) AS credits
+        FROM accounts LEFT JOIN journal_lines ON journal_lines.account_id = accounts.id
+        LEFT JOIN journal_entries ON journal_entries.id = journal_lines.entry_id
+        WHERE {' AND '.join(conditions)} GROUP BY accounts.id ORDER BY accounts.code""",
+        params,
+    ).fetchall()
+    return [row_to_dict(row) for row in rows]
+
+
+def profit_and_loss(business_id: int, start_date: str, end_date: str) -> dict[str, Any]:
+    start_date = _date(start_date, "start_date")
+    end_date = _date(end_date, "end_date")
+    if end_date < start_date:
+        raise ValueError("end_date cannot be before start_date")
+    with get_db() as conn:
+        _require_business(conn, business_id)
+        balances = _account_balances(conn, business_id, end_date, start_date)
+    revenue = [{**row, "amount": round(row["credits"] - row["debits"], 2)} for row in balances if row["account_type"] == "revenue"]
+    expenses = [{**row, "amount": round(row["debits"] - row["credits"], 2)} for row in balances if row["account_type"] == "expense"]
+    total_revenue = round(sum(row["amount"] for row in revenue), 2)
+    total_expenses = round(sum(row["amount"] for row in expenses), 2)
+    return {"start_date": start_date, "end_date": end_date, "revenue": revenue, "expenses": expenses, "total_revenue": total_revenue, "total_expenses": total_expenses, "net_income": round(total_revenue - total_expenses, 2)}
+
+
+def balance_sheet(business_id: int, as_of: str) -> dict[str, Any]:
+    as_of = _date(as_of, "as_of")
+    with get_db() as conn:
+        _require_business(conn, business_id)
+        balances = _account_balances(conn, business_id, as_of)
+    assets = [{**row, "amount": round(row["debits"] - row["credits"], 2)} for row in balances if row["account_type"] == "asset"]
+    liabilities = [{**row, "amount": round(row["credits"] - row["debits"], 2)} for row in balances if row["account_type"] == "liability"]
+    equity = [{**row, "amount": round(row["credits"] - row["debits"], 2)} for row in balances if row["account_type"] == "equity"]
+    revenue = sum(row["credits"] - row["debits"] for row in balances if row["account_type"] == "revenue")
+    expenses = sum(row["debits"] - row["credits"] for row in balances if row["account_type"] == "expense")
+    current_earnings = round(revenue - expenses, 2)
+    total_assets = round(sum(row["amount"] for row in assets), 2)
+    total_liabilities = round(sum(row["amount"] for row in liabilities), 2)
+    total_equity = round(sum(row["amount"] for row in equity) + current_earnings, 2)
+    return {"as_of": as_of, "assets": assets, "liabilities": liabilities, "equity": equity, "current_earnings": current_earnings, "total_assets": total_assets, "total_liabilities": total_liabilities, "total_equity": total_equity, "balanced": round(total_assets - total_liabilities - total_equity, 2) == 0}
+
+
+# Federal corporate income tax estimate. This is a simplified flat-rate
+# estimate for planning purposes only and is not legal or tax advice.
+CORPORATE_FEDERAL_RATE = 0.21
+
+
+def corporate_tax_summary(business_id: int, start_date: str, end_date: str) -> dict[str, Any]:
+    """Derive a corporate tax estimate from posted accounting results.
+
+    Consumes the Profit & Loss read model so corporate tax always reflects the
+    same posted entries used by financial reports. The estimate is a flat
+    federal rate applied to taxable net income; it is an estimate only.
+    """
+    pl = profit_and_loss(business_id, start_date, end_date)
+    net_income = pl["net_income"]
+    taxable_income = max(0.0, net_income)
+    federal_tax = round(taxable_income * CORPORATE_FEDERAL_RATE, 2)
+    return {
+        "start_date": pl["start_date"],
+        "end_date": pl["end_date"],
+        "total_revenue": pl["total_revenue"],
+        "total_expenses": pl["total_expenses"],
+        "net_income": net_income,
+        "taxable_income": round(taxable_income, 2),
+        "federal_tax_estimate": federal_tax,
+        "rate": CORPORATE_FEDERAL_RATE,
+        "disclaimer": "Estimate only. Not legal or tax advice.",
+    }

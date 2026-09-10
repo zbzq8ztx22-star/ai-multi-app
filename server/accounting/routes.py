@@ -137,3 +137,44 @@ def expenses() -> Any:
 @admin_required
 def create_expense() -> Any:
     return _json_write(service.create_expense)
+
+
+@bp.route("/reports/profit-loss", methods=["GET"])
+@login_required
+def profit_loss() -> Any:
+    business_id = request.args.get("business_id", type=int)
+    start_date = request.args.get("start_date", "")
+    end_date = request.args.get("end_date", "")
+    if business_id is None:
+        return jsonify({"error": "business_id is required"}), 400
+    try:
+        return jsonify(service.profit_and_loss(business_id, start_date, end_date))
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+
+
+@bp.route("/reports/balance-sheet", methods=["GET"])
+@login_required
+def financial_position() -> Any:
+    business_id = request.args.get("business_id", type=int)
+    as_of = request.args.get("as_of", "")
+    if business_id is None:
+        return jsonify({"error": "business_id is required"}), 400
+    try:
+        return jsonify(service.balance_sheet(business_id, as_of))
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+
+
+@bp.route("/reports/corporate-tax", methods=["GET"])
+@login_required
+def corporate_tax() -> Any:
+    business_id = request.args.get("business_id", type=int)
+    start_date = request.args.get("start_date", "")
+    end_date = request.args.get("end_date", "")
+    if business_id is None:
+        return jsonify({"error": "business_id is required"}), 400
+    try:
+        return jsonify(service.corporate_tax_summary(business_id, start_date, end_date))
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
