@@ -411,6 +411,23 @@ CREATE TABLE IF NOT EXISTS closing_periods (
 );
 
 CREATE INDEX IF NOT EXISTS idx_closing_periods_business ON closing_periods(business_id, period_end);
+
+CREATE TABLE IF NOT EXISTS tax_payments (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    business_id INTEGER NOT NULL,
+    tax_type TEXT NOT NULL CHECK(tax_type IN ('federal_estimated', 'state_estimated', 'federal_payroll', 'state_payroll', 'sales', 'other')),
+    payment_date TEXT NOT NULL,
+    amount REAL NOT NULL CHECK(amount > 0),
+    period_start TEXT NOT NULL,
+    period_end TEXT NOT NULL,
+    reference TEXT NOT NULL DEFAULT '',
+    notes TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL,
+    FOREIGN KEY (business_id) REFERENCES businesses(id) ON DELETE CASCADE,
+    CHECK(period_end >= period_start)
+);
+
+CREATE INDEX IF NOT EXISTS idx_tax_payments_business ON tax_payments(business_id, payment_date);
 """
 
 
