@@ -1170,3 +1170,65 @@ def is_period_closed(business_id: int, entry_date: str) -> dict[str, Any]:
     with get_db() as conn:
         _require_business(conn, business_id)
         return {"entry_date": entry_date, "closed": _is_period_closed(conn, business_id, entry_date)}
+
+
+def customer_statement(business_id: int, customer_id: int, start_date: str | None = None, end_date: str | None = None) -> dict[str, Any]:
+    """Generate a customer statement with invoices, payments, and balance."""
+    with get_db() as conn:
+        _require_business(conn, business_id)
+        contact = conn.execute("SELECT * FROM accounting_contacts WHERE id = ? AND business_id = ? AND contact_type IN ('customer', 'both')", (customer_id, business_id)).fetchone()
+        if contact is None:
+            raise ValueError("Customer not found for this business")
+        query = "SELECT * FROM invoices WHERE business_id = ? AND customer_id = ?"
+        params: list[Any] = [business_id, customer_id]
+        if start_date:
+            query += " AND issue_date >= ?"
+            params.append(start_date)
+        if end_date:
+            query += " AND issue_date <= ?"
+            params.append(end_date)
+        query += " ORDER BY issue_date, id"
+        invoices = [row_to_dict(r) for r in conn.execute(query, params).fetchall()]
+        invoice_ids = [inv["id"] for inv in invoices]
+        payments: list[dict[str, Any]] = []
+        if invoice_ids:
+            placeholders = ",".join("?" * len(invoice_ids))
+            pay_rows = conn.execute(f"SELECT * FROM invoice_payments WHERE invoice_id IN ({placeholders}) ORDER BY payment_date", invoice_ids).fetchall()
+            payments = [row_to_dict(r) for r in pay_rows]
+        total_invoiced = round(sum(inv["amount"] for inv in invoices), 2)
+        total_paid = round(sum(p["amount"] for p in payments), 2)
+        balance_due = round(total_invoiced - total_paid, 2)
+        return {
+            "customer": row_to_dict(contact),
+            "invoices": invoices,
+            "payments": payments,
+            "total_invoiced": total_invoiced,
+            "total_paid": total_paid,
+            "balance_due": balance_due,
+        }
+
+
+def vendor_statement(business_id: int, vendor_id: int, start_date: str | None = None, end_date: str | None = None) -> dict[str, Any]:
+    """Generate a vendor statement with expenses and total spent."""
+    with get_db() as conn:
+        _require_business(conn, business_id)
+        contact = conn.execute("SELECT * FROM accounting_contacts WHERE id = ? AND business_id = ? AND contact_type IN ('vendor', 'both')", (vendor_id, business_id)).fetchone()
+        if contact is None:
+            raise ValueError("Vendor not found for this business")
+        query = "SELECT * FROM expenses WHERE business_id = ? AND vendor_id = ?"
+        params: list[Any] = [business_id, vendor_id]
+        if start_date:
+            query += " AND expense_date >= ?"
+            params.append(start_date)
+        if end_date:
+            query += " AND expense_date <= ?"
+            params.append(end_date)
+        query += " ORDER BY expense_date, id"
+        expenses = [row_to_dict(r) for r in conn.execute(query, params).fetchall()]
+        total_spent = round(sum(exp["amount"] for exp in expenses), 2)
+        return {
+            "vendor": row_to_dict(contact),
+            "expenses": expenses,
+            "total_spent": total_spent,
+            "expense_count": len(expenses),
+        }

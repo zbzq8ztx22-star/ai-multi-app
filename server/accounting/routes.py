@@ -652,3 +652,31 @@ def check_period_closed() -> Any:
         return jsonify(service.is_period_closed(business_id, entry_date))
     except ValueError as exc:
         return jsonify({"error": str(exc)}), 400
+
+
+@bp.route("/statements/customer/<int:customer_id>", methods=["GET"])
+@login_required
+def customer_statement(customer_id: int) -> Any:
+    business_id = request.args.get("business_id", type=int)
+    start_date = request.args.get("start_date")
+    end_date = request.args.get("end_date")
+    if business_id is None:
+        return jsonify({"error": "business_id is required"}), 400
+    try:
+        return jsonify(service.customer_statement(business_id, customer_id, start_date, end_date))
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+
+
+@bp.route("/statements/vendor/<int:vendor_id>", methods=["GET"])
+@login_required
+def vendor_statement(vendor_id: int) -> Any:
+    business_id = request.args.get("business_id", type=int)
+    start_date = request.args.get("start_date")
+    end_date = request.args.get("end_date")
+    if business_id is None:
+        return jsonify({"error": "business_id is required"}), 400
+    try:
+        return jsonify(service.vendor_statement(business_id, vendor_id, start_date, end_date))
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
