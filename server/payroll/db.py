@@ -343,6 +343,31 @@ CREATE TABLE IF NOT EXISTS reconciliations (
 );
 
 CREATE INDEX IF NOT EXISTS idx_reconciliations_business ON reconciliations(business_id, statement_date);
+
+CREATE TABLE IF NOT EXISTS recurring_expenses (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    business_id INTEGER NOT NULL,
+    vendor_id INTEGER,
+    description TEXT NOT NULL,
+    amount REAL NOT NULL CHECK(amount > 0),
+    expense_account_id INTEGER NOT NULL,
+    payment_account_id INTEGER NOT NULL,
+    frequency TEXT NOT NULL CHECK(frequency IN ('weekly', 'monthly', 'quarterly', 'yearly')),
+    start_date TEXT NOT NULL,
+    next_date TEXT NOT NULL,
+    end_date TEXT,
+    last_posted_date TEXT,
+    active INTEGER NOT NULL DEFAULT 1,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    FOREIGN KEY (business_id) REFERENCES businesses(id) ON DELETE CASCADE,
+    FOREIGN KEY (vendor_id) REFERENCES accounting_contacts(id) ON DELETE SET NULL,
+    FOREIGN KEY (expense_account_id) REFERENCES accounts(id) ON DELETE CASCADE,
+    FOREIGN KEY (payment_account_id) REFERENCES accounts(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_recurring_expenses_business ON recurring_expenses(business_id, active);
+CREATE INDEX IF NOT EXISTS idx_recurring_expenses_next_date ON recurring_expenses(next_date, active);
 """
 
 

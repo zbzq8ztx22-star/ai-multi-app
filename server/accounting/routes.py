@@ -551,3 +551,57 @@ def export_general_ledger() -> Any:
     for line in ledger:
         rows.append([line["entry_date"], line["reference"], line["entry_description"], line["account_code"], line["account_name"], line["description"], line["debit"], line["credit"]])
     return _csv_response(rows, "general-ledger.csv")
+
+
+@bp.route("/recurring-expenses", methods=["GET"])
+@login_required
+def recurring_expenses() -> Any:
+    business_id = request.args.get("business_id", type=int)
+    if business_id is None:
+        return jsonify({"error": "business_id is required"}), 400
+    try:
+        return jsonify(service.list_recurring_expenses(business_id))
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+
+
+@bp.route("/recurring-expenses", methods=["POST"])
+@admin_required
+def create_recurring_expense() -> Any:
+    return _json_write(service.create_recurring_expense)
+
+
+@bp.route("/recurring-expenses/<int:recurring_id>", methods=["PUT"])
+@admin_required
+def update_recurring_expense(recurring_id: int) -> Any:
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict):
+        return jsonify({"error": "Request body must be JSON"}), 400
+    try:
+        return jsonify(service.update_recurring_expense(recurring_id, data))
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+
+
+@bp.route("/recurring-expenses/<int:recurring_id>", methods=["DELETE"])
+@admin_required
+def delete_recurring_expense(recurring_id: int) -> Any:
+    try:
+        service.delete_recurring_expense(recurring_id)
+        return jsonify({"deleted": True})
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+
+
+@bp.route("/recurring-expenses/post-due", methods=["POST"])
+@admin_required
+def post_due_recurring() -> Any:
+    business_id = request.args.get("business_id", type=int)
+    as_of = request.args.get("as_of")
+    if business_id is None:
+        return jsonify({"error": "business_id is required"}), 400
+    try:
+        posted = service.post_due_recurring_expenses(business_id, as_of)
+        return jsonify({"posted_count": len(posted), "posted": posted})
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
