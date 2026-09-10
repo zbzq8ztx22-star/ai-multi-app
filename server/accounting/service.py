@@ -241,6 +241,42 @@ def list_invoices(business_id: int) -> list[dict[str, Any]]:
         return [row_to_dict(row) for row in rows]
 
 
+def get_invoice_detail(invoice_id: int) -> dict[str, Any] | None:
+    with get_db() as conn:
+        row = conn.execute(
+            """SELECT invoices.*, accounting_contacts.name AS customer_name,
+               accounting_contacts.email AS customer_email,
+               businesses.legal_name AS business_name,
+               businesses.dba_name AS business_dba
+               FROM invoices
+               JOIN accounting_contacts ON accounting_contacts.id = invoices.customer_id
+               JOIN businesses ON businesses.id = invoices.business_id
+               WHERE invoices.id = ?""",
+            (invoice_id,),
+        ).fetchone()
+        if row is None:
+            return None
+        return row_to_dict(row)
+
+
+def void_invoice(invoice_id: int) -> dict[str, Any]:
+    """Void an open invoice by setting status to 'void'.
+
+    This does not reverse the journal entry; it simply marks the invoice
+    as void so it no longer appears in AR aging reports.
+    """
+    now = now_utc()
+    with get_db() as conn:
+        row = conn.execute("SELECT * FROM invoices WHERE id = ?", (invoice_id,)).fetchone()
+        if row is None:
+            raise ValueError("Invoice not found")
+        if row["status"] != "open":
+            raise ValueError("Only open invoices can be voided")
+        conn.execute("UPDATE invoices SET status = 'void', updated_at = ? WHERE id = ?", (now, invoice_id))
+        conn.commit()
+        return row_to_dict(conn.execute("SELECT * FROM invoices WHERE id = ?", (invoice_id,)).fetchone())
+
+
 def create_invoice(data: dict[str, Any]) -> dict[str, Any]:
     try:
         business_id = int(data.get("business_id")); customer_id = int(data.get("customer_id"))
