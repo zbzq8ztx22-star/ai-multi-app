@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { MessageSquare, Image, Calculator, FileText, Wallet, Menu, X, LogOut, Loader2, BookOpen, LayoutDashboard } from 'lucide-react'
+import { MessageSquare, Image, Calculator, FileText, Wallet, Menu, X, LogOut, Loader2, BookOpen, LayoutDashboard, Settings as SettingsIcon } from 'lucide-react'
 import { apiGet, apiPost } from './api'
 import Accounting from './components/Accounting'
 import Chat from './components/Chat'
@@ -7,6 +7,7 @@ import Dashboard from './components/Dashboard'
 import Docs from './components/Docs'
 import Login from './components/Login'
 import Payroll from './components/Payroll'
+import Settings from './components/Settings'
 import Tax from './components/Tax'
 import Vision from './components/Vision'
 
@@ -39,6 +40,7 @@ function App() {
     { id: 'accounting', name: 'Accounting', icon: BookOpen },
     { id: 'docs', name: 'Documents', icon: FileText },
     { id: 'payroll', name: 'Payroll', icon: Wallet },
+    { id: 'settings', name: 'Settings', icon: SettingsIcon },
   ]
 
   if (authLoading) {
@@ -122,6 +124,7 @@ function App() {
         {activeTab === 'accounting' && <Accounting />}
         {activeTab === 'docs' && <Docs />}
         {activeTab === 'payroll' && <Payroll />}
+        {activeTab === 'settings' && <Settings />}
       </main>
     </div>
   )
