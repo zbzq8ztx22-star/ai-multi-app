@@ -144,6 +144,41 @@ CREATE TABLE IF NOT EXISTS business_owners (
 
 CREATE INDEX IF NOT EXISTS idx_taxpayers_employee ON taxpayers(employee_id);
 CREATE INDEX IF NOT EXISTS idx_businesses_name ON businesses(legal_name);
+
+CREATE TABLE IF NOT EXISTS tax_returns (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    taxpayer_id INTEGER NOT NULL,
+    tax_year INTEGER NOT NULL,
+    status TEXT NOT NULL DEFAULT 'draft' CHECK(status IN ('draft', 'reviewed', 'filed')),
+    filing_status TEXT NOT NULL,
+    residence_state TEXT NOT NULL DEFAULT '',
+    wages REAL NOT NULL DEFAULT 0,
+    interest_income REAL NOT NULL DEFAULT 0,
+    dividend_income REAL NOT NULL DEFAULT 0,
+    business_income REAL NOT NULL DEFAULT 0,
+    capital_gains REAL NOT NULL DEFAULT 0,
+    other_income REAL NOT NULL DEFAULT 0,
+    adjustments REAL NOT NULL DEFAULT 0,
+    itemized_deductions REAL NOT NULL DEFAULT 0,
+    credits REAL NOT NULL DEFAULT 0,
+    federal_withholding REAL NOT NULL DEFAULT 0,
+    estimated_payments REAL NOT NULL DEFAULT 0,
+    state_tax_liability REAL NOT NULL DEFAULT 0,
+    state_withholding REAL NOT NULL DEFAULT 0,
+    total_income REAL NOT NULL DEFAULT 0,
+    adjusted_gross_income REAL NOT NULL DEFAULT 0,
+    deduction REAL NOT NULL DEFAULT 0,
+    taxable_income REAL NOT NULL DEFAULT 0,
+    federal_tax REAL NOT NULL DEFAULT 0,
+    federal_refund_or_due REAL NOT NULL DEFAULT 0,
+    state_refund_or_due REAL NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    UNIQUE(taxpayer_id, tax_year),
+    FOREIGN KEY (taxpayer_id) REFERENCES taxpayers(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_tax_returns_taxpayer_year ON tax_returns(taxpayer_id, tax_year);
 """
 
 
