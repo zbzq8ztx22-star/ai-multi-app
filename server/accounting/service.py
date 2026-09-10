@@ -418,3 +418,136 @@ def corporate_tax_summary(business_id: int, start_date: str, end_date: str) -> d
         "rate": CORPORATE_FEDERAL_RATE,
         "disclaimer": "Estimate only. Not legal or tax advice.",
     }
+
+
+BUDGET_PERIODS = {"annual", "q1", "q2", "q3", "q4", "jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"}
+
+_PERIOD_MONTHS = {
+    "annual": list(range(1, 13)),
+    "q1": [1, 2, 3], "q2": [4, 5, 6], "q3": [7, 8, 9], "q4": [10, 11, 12],
+    "jan": [1], "feb": [2], "mar": [3], "apr": [4], "may": [5], "jun": [6],
+    "jul": [7], "aug": [8], "sep": [9], "oct": [10], "nov": [11], "dec": [12],
+}
+
+
+def list_budgets(business_id: int, fiscal_year: int | None = None) -> list[dict[str, Any]]:
+    with get_db() as conn:
+        _require_business(conn, business_id)
+        query = """SELECT budgets.*, accounts.code AS account_code, accounts.name AS account_name, accounts.account_type
+            FROM budgets JOIN accounts ON accounts.id = budgets.account_id
+            WHERE budgets.business_id = ?"""
+        params: list[Any] = [business_id]
+        if fiscal_year is not None:
+            query += " AND budgets.fiscal_year = ?"
+            params.append(fiscal_year)
+        query += " ORDER BY budgets.fiscal_year DESC, accounts.code"
+        return [row_to_dict(row) for row in conn.execute(query, params).fetchall()]
+
+
+def create_budget(data: dict[str, Any]) -> dict[str, Any]:
+    try:
+        business_id = int(data.get("business_id"))
+    except (TypeError, ValueError):
+        raise ValueError("business_id is required")
+    try:
+        account_id = int(data.get("account_id"))
+    except (TypeError, ValueError):
+        raise ValueError("account_id is required")
+    try:
+        fiscal_year = int(data.get("fiscal_year"))
+    except (TypeError, ValueError):
+        raise ValueError("fiscal_year is required")
+    if fiscal_year < 1900 or fiscal_year > 2100:
+        raise ValueError("fiscal_year must be a valid year")
+    period = str(data.get("period", "annual")).strip().lower()
+    if period not in BUDGET_PERIODS:
+        raise ValueError("Invalid period")
+    budgeted_amount = _money(data.get("budgeted_amount"), "budgeted_amount")
+    now = now_utc()
+    with get_db() as conn:
+        _require_business(conn, business_id)
+        account = conn.execute("SELECT account_type FROM accounts WHERE id = ? AND business_id = ? AND active = 1", (account_id, business_id)).fetchone()
+        if account is None:
+            raise ValueError("Account not found for this business")
+        try:
+            cursor = conn.execute(
+                "INSERT INTO budgets (business_id, account_id, fiscal_year, period, budgeted_amount, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (business_id, account_id, fiscal_year, period, budgeted_amount, now, now),
+            )
+        except sqlite3.IntegrityError:
+            raise ValueError("Budget already exists for this account, year, and period")
+        conn.commit()
+        return row_to_dict(conn.execute("SELECT * FROM budgets WHERE id = ?", (cursor.lastrowid,)).fetchone())
+
+
+def update_budget(budget_id: int, data: dict[str, Any]) -> dict[str, Any]:
+    budgeted_amount = _money(data.get("budgeted_amount"), "budgeted_amount")
+    now = now_utc()
+    with get_db() as conn:
+        row = conn.execute("SELECT * FROM budgets WHERE id = ?", (budget_id,)).fetchone()
+        if row is None:
+            raise ValueError("Budget not found")
+        conn.execute("UPDATE budgets SET budgeted_amount = ?, updated_at = ? WHERE id = ?", (budgeted_amount, now, budget_id))
+        conn.commit()
+        return row_to_dict(conn.execute("SELECT * FROM budgets WHERE id = ?", (budget_id,)).fetchone())
+
+
+def delete_budget(budget_id: int) -> None:
+    with get_db() as conn:
+        if conn.execute("SELECT id FROM budgets WHERE id = ?", (budget_id,)).fetchone() is None:
+            raise ValueError("Budget not found")
+        conn.execute("DELETE FROM budgets WHERE id = ?", (budget_id,))
+        conn.commit()
+
+
+def budget_vs_actual(business_id: int, fiscal_year: int) -> dict[str, Any]:
+    """Compare budgeted amounts against posted journal entries for a fiscal year.
+
+    Actuals are derived from posted journal lines, using the same sign
+    convention as the P&L: revenue is credit-normal (credits - debits),
+    expenses are debit-normal (debits - credits).
+    """
+    with get_db() as conn:
+        _require_business(conn, business_id)
+        start_date = f"{fiscal_year}-01-01"
+        end_date = f"{fiscal_year}-12-31"
+        balances = _account_balances(conn, business_id, end_date, start_date)
+        budgets = [row_to_dict(row) for row in conn.execute(
+            """SELECT budgets.*, accounts.code AS account_code, accounts.name AS account_name, accounts.account_type
+            FROM budgets JOIN accounts ON accounts.id = budgets.account_id
+            WHERE budgets.business_id = ? AND budgets.fiscal_year = ? AND budgets.period = 'annual'
+            ORDER BY accounts.code""",
+            (business_id, fiscal_year),
+        ).fetchall()]
+
+    balance_map = {row["id"]: row for row in balances}
+    lines = []
+    for budget in budgets:
+        acct = balance_map.get(budget["account_id"], {"debits": 0, "credits": 0})
+        if budget["account_type"] == "revenue":
+            actual = round(acct["credits"] - acct["debits"], 2)
+        elif budget["account_type"] == "expense":
+            actual = round(acct["debits"] - acct["credits"], 2)
+        else:
+            actual = round(acct["debits"] - acct["credits"], 2)
+        budgeted = budget["budgeted_amount"]
+        variance = round(budgeted - actual, 2)
+        lines.append({
+            "account_id": budget["account_id"],
+            "account_code": budget["account_code"],
+            "account_name": budget["account_name"],
+            "account_type": budget["account_type"],
+            "budgeted": budgeted,
+            "actual": actual,
+            "variance": variance,
+            "over_budget": actual > budgeted if budgeted > 0 else False,
+        })
+    total_budgeted = round(sum(line["budgeted"] for line in lines), 2)
+    total_actual = round(sum(line["actual"] for line in lines), 2)
+    return {
+        "fiscal_year": fiscal_year,
+        "lines": lines,
+        "total_budgeted": total_budgeted,
+        "total_actual": total_actual,
+        "total_variance": round(total_budgeted - total_actual, 2),
+    }

@@ -178,3 +178,57 @@ def corporate_tax() -> Any:
         return jsonify(service.corporate_tax_summary(business_id, start_date, end_date))
     except ValueError as exc:
         return jsonify({"error": str(exc)}), 400
+
+
+@bp.route("/budgets", methods=["GET"])
+@login_required
+def budgets() -> Any:
+    business_id = request.args.get("business_id", type=int)
+    fiscal_year = request.args.get("fiscal_year", type=int)
+    if business_id is None:
+        return jsonify({"error": "business_id is required"}), 400
+    try:
+        return jsonify(service.list_budgets(business_id, fiscal_year))
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+
+
+@bp.route("/budgets", methods=["POST"])
+@admin_required
+def create_budget() -> Any:
+    return _json_write(service.create_budget)
+
+
+@bp.route("/budgets/<int:budget_id>", methods=["PUT"])
+@admin_required
+def update_budget(budget_id: int) -> Any:
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict):
+        return jsonify({"error": "Request body must be JSON"}), 400
+    try:
+        return jsonify(service.update_budget(budget_id, data))
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+
+
+@bp.route("/budgets/<int:budget_id>", methods=["DELETE"])
+@admin_required
+def delete_budget(budget_id: int) -> Any:
+    try:
+        service.delete_budget(budget_id)
+        return jsonify({"deleted": True})
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+
+
+@bp.route("/reports/budget-vs-actual", methods=["GET"])
+@login_required
+def budget_vs_actual() -> Any:
+    business_id = request.args.get("business_id", type=int)
+    fiscal_year = request.args.get("fiscal_year", type=int)
+    if business_id is None or fiscal_year is None:
+        return jsonify({"error": "business_id and fiscal_year are required"}), 400
+    try:
+        return jsonify(service.budget_vs_actual(business_id, fiscal_year))
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400

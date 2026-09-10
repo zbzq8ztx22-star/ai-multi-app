@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { BarChart3, BookOpen, Building2, Plus, RefreshCw } from 'lucide-react'
 import { apiGet, apiPost } from '../api'
 import AccountingOperations from './AccountingOperations'
+import Budgets from './Budgets'
 import FinancialReports from './FinancialReports'
 
 const EMPTY_BUSINESS = { legal_name: '', dba_name: '', entity_type: 'llc', ein_last4: '', formation_state: '', fiscal_year_end: '12-31', accounting_method: 'cash' }
@@ -83,6 +84,8 @@ export default function Accounting() {
         <AccountingOperations businessId={businessId} accounts={accounts} onPosted={() => loadAccounting(businessId)} />
 
         <FinancialReports businessId={businessId} />
+
+        <Budgets businessId={businessId} accounts={accounts} />
 
         <div className="card"><h2 className="text-lg font-semibold flex items-center gap-2 mb-4"><BarChart3 size={20} /> Trial balance</h2>{trialBalance && <><div className="overflow-x-auto"><table className="w-full text-sm"><thead><tr className="text-left text-gray-400 border-b border-gray-700"><th className="py-2">Account</th><th>Type</th><th className="text-right">Debits</th><th className="text-right">Credits</th></tr></thead><tbody>{trialBalance.accounts.map(a => <tr key={a.id} className="border-b border-gray-800"><td className="py-2">{a.code} · {a.name}</td><td className="capitalize">{a.account_type}</td><td className="text-right">{money(a.debits)}</td><td className="text-right">{money(a.credits)}</td></tr>)}</tbody><tfoot><tr className="font-bold"><td className="pt-3" colSpan="2">Totals</td><td className="pt-3 text-right">{money(trialBalance.total_debits)}</td><td className="pt-3 text-right">{money(trialBalance.total_credits)}</td></tr></tfoot></table></div><p className={`mt-3 ${trialBalance.balanced ? 'text-green-400' : 'text-red-400'}`}>{trialBalance.balanced ? 'Books are balanced' : 'Books are out of balance'}</p></>}</div>
 

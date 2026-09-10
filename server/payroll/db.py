@@ -293,6 +293,22 @@ CREATE TABLE IF NOT EXISTS expenses (
 CREATE INDEX IF NOT EXISTS idx_contacts_business ON accounting_contacts(business_id, name);
 CREATE INDEX IF NOT EXISTS idx_invoices_business ON invoices(business_id, issue_date);
 CREATE INDEX IF NOT EXISTS idx_expenses_business ON expenses(business_id, expense_date);
+
+CREATE TABLE IF NOT EXISTS budgets (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    business_id INTEGER NOT NULL,
+    account_id INTEGER NOT NULL,
+    fiscal_year INTEGER NOT NULL,
+    period TEXT NOT NULL DEFAULT 'annual' CHECK(period IN ('annual', 'q1', 'q2', 'q3', 'q4', 'jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec')),
+    budgeted_amount REAL NOT NULL DEFAULT 0 CHECK(budgeted_amount >= 0),
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    UNIQUE(business_id, account_id, fiscal_year, period),
+    FOREIGN KEY (business_id) REFERENCES businesses(id) ON DELETE CASCADE,
+    FOREIGN KEY (account_id) REFERENCES accounts(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_budgets_business_year ON budgets(business_id, fiscal_year);
 """
 
 
