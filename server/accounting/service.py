@@ -1329,3 +1329,109 @@ def assign_account_to_group(account_id: int, group_id: int) -> dict[str, Any]:
         conn.execute("UPDATE accounts SET group_id = ?, updated_at = ? WHERE id = ?", (group_id, now_utc(), account_id))
         conn.commit()
         return row_to_dict(conn.execute("SELECT * FROM accounts WHERE id = ?", (account_id,)).fetchone())
+
+
+def list_payment_terms(business_id: int) -> list[dict[str, Any]]:
+    with get_db() as conn:
+        _require_business(conn, business_id)
+        rows = conn.execute(
+            "SELECT * FROM payment_terms WHERE business_id = ? ORDER BY is_default DESC, net_days",
+            (business_id,),
+        ).fetchall()
+        return [row_to_dict(row) for row in rows]
+
+
+def create_payment_terms(data: dict[str, Any]) -> dict[str, Any]:
+    try:
+        business_id = int(data.get("business_id"))
+    except (TypeError, ValueError):
+        raise ValueError("business_id is required")
+    name = str(data.get("name", "")).strip()
+    if not name:
+        raise ValueError("name is required")
+    net_days = int(data.get("net_days", 30))
+    if net_days < 0:
+        raise ValueError("net_days must be >= 0")
+    discount_percent = float(data.get("discount_percent", 0))
+    if discount_percent < 0 or discount_percent > 100:
+        raise ValueError("discount_percent must be between 0 and 100")
+    discount_days = int(data.get("discount_days", 0))
+    if discount_days < 0:
+        raise ValueError("discount_days must be >= 0")
+    description = str(data.get("description", "")).strip()
+    is_default = 1 if data.get("is_default") else 0
+    now = now_utc()
+    with get_db() as conn:
+        _require_business(conn, business_id)
+        if is_default:
+            existing_default = conn.execute("SELECT id FROM payment_terms WHERE business_id = ? AND is_default = 1", (business_id,)).fetchone()
+            if existing_default:
+                raise ValueError("Business already has a default payment term")
+        try:
+            cursor = conn.execute(
+                "INSERT INTO payment_terms (business_id, name, net_days, discount_percent, discount_days, description, is_default, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (business_id, name, net_days, discount_percent, discount_days, description, is_default, now, now),
+            )
+        except sqlite3.IntegrityError:
+            raise ValueError("Payment term with this name already exists for this business")
+        conn.commit()
+        return row_to_dict(conn.execute("SELECT * FROM payment_terms WHERE id = ?", (cursor.lastrowid,)).fetchone())
+
+
+def update_payment_terms(term_id: int, data: dict[str, Any]) -> dict[str, Any]:
+    with get_db() as conn:
+        row = conn.execute("SELECT * FROM payment_terms WHERE id = ?", (term_id,)).fetchone()
+        if row is None:
+            raise ValueError("Payment term not found")
+        updates: list[str] = []
+        params: list[Any] = []
+        for field in ("name", "description"):
+            val = data.get(field)
+            if val is not None:
+                updates.append(f"{field} = ?")
+                params.append(str(val).strip())
+        for field in ("net_days", "discount_days"):
+            val = data.get(field)
+            if val is not None:
+                val = int(val)
+                if val < 0:
+                    raise ValueError(f"{field} must be >= 0")
+                updates.append(f"{field} = ?")
+                params.append(val)
+        if "discount_percent" in data:
+            val = float(data["discount_percent"])
+            if val < 0 or val > 100:
+                raise ValueError("discount_percent must be between 0 and 100")
+            updates.append("discount_percent = ?")
+            params.append(val)
+        if "is_default" in data:
+            is_default = 1 if data["is_default"] else 0
+            if is_default and not row["is_default"]:
+                existing = conn.execute("SELECT id FROM payment_terms WHERE business_id = ? AND is_default = 1 AND id != ?", (row["business_id"], term_id)).fetchone()
+                if existing:
+                    raise ValueError("Business already has a default payment term")
+            updates.append("is_default = ?")
+            params.append(is_default)
+        if updates:
+            updates.append("updated_at = ?")
+            params.append(now_utc())
+            conn.execute(f"UPDATE payment_terms SET {', '.join(updates)} WHERE id = ?", [*params, term_id])
+            conn.commit()
+        return row_to_dict(conn.execute("SELECT * FROM payment_terms WHERE id = ?", (term_id,)).fetchone())
+
+
+def delete_payment_terms(term_id: int) -> None:
+    with get_db() as conn:
+        row = conn.execute("SELECT id FROM payment_terms WHERE id = ?", (term_id,)).fetchone()
+        if row is None:
+            raise ValueError("Payment term not found")
+        conn.execute("DELETE FROM payment_terms WHERE id = ?", (term_id,))
+        conn.commit()
+
+
+def calculate_due_date(issue_date: str, net_days: int) -> str:
+    """Calculate due date from issue date and net days."""
+    import datetime
+    d = datetime.date.fromisoformat(issue_date)
+    due = d + datetime.timedelta(days=net_days)
+    return due.isoformat()

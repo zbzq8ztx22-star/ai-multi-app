@@ -460,6 +460,23 @@ CREATE TABLE IF NOT EXISTS cost_centers (
 );
 
 CREATE INDEX IF NOT EXISTS idx_cost_centers_business ON cost_centers(business_id, code);
+
+CREATE TABLE IF NOT EXISTS payment_terms (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    business_id INTEGER NOT NULL,
+    name TEXT NOT NULL,
+    net_days INTEGER NOT NULL DEFAULT 30 CHECK(net_days >= 0),
+    discount_percent REAL NOT NULL DEFAULT 0 CHECK(discount_percent >= 0 AND discount_percent <= 100),
+    discount_days INTEGER NOT NULL DEFAULT 0 CHECK(discount_days >= 0),
+    description TEXT NOT NULL DEFAULT '',
+    is_default INTEGER NOT NULL DEFAULT 0 CHECK(is_default IN (0, 1)),
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    FOREIGN KEY (business_id) REFERENCES businesses(id) ON DELETE CASCADE,
+    UNIQUE(business_id, name)
+);
+
+CREATE INDEX IF NOT EXISTS idx_payment_terms_business ON payment_terms(business_id, name);
 """
 
 

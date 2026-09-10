@@ -741,3 +741,49 @@ def assign_account_to_group(account_id: int) -> Any:
         return jsonify(service.assign_account_to_group(account_id, int(group_id)))
     except ValueError as exc:
         return jsonify({"error": str(exc)}), 400
+
+
+@bp.route("/payment-terms", methods=["GET"])
+@login_required
+def payment_terms() -> Any:
+    business_id = request.args.get("business_id", type=int)
+    if business_id is None:
+        return jsonify({"error": "business_id is required"}), 400
+    try:
+        return jsonify(service.list_payment_terms(business_id))
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+
+
+@bp.route("/payment-terms", methods=["POST"])
+@admin_required
+def create_payment_terms() -> Any:
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict):
+        return jsonify({"error": "Request body must be JSON"}), 400
+    try:
+        return jsonify(service.create_payment_terms(data)), 201
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+
+
+@bp.route("/payment-terms/<int:term_id>", methods=["PUT"])
+@admin_required
+def update_payment_terms(term_id: int) -> Any:
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict):
+        return jsonify({"error": "Request body must be JSON"}), 400
+    try:
+        return jsonify(service.update_payment_terms(term_id, data))
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+
+
+@bp.route("/payment-terms/<int:term_id>", methods=["DELETE"])
+@admin_required
+def delete_payment_terms(term_id: int) -> Any:
+    try:
+        service.delete_payment_terms(term_id)
+        return jsonify({"deleted": True})
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
