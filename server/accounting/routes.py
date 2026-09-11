@@ -1160,3 +1160,32 @@ def delete_purchase_order(po_id: int) -> Any:
         return jsonify({"deleted": True})
     except ValueError as exc:
         return jsonify({"error": str(exc)}), 400
+
+
+@bp.route("/reports/fixed-asset-register", methods=["GET"])
+@login_required
+def fixed_asset_register() -> Any:
+    business_id = request.args.get("business_id", type=int)
+    if business_id is None:
+        return jsonify({"error": "business_id is required"}), 400
+    try:
+        return jsonify(service.fixed_asset_register(business_id))
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+
+
+@bp.route("/depreciation-assets/<int:asset_id>/dispose", methods=["POST"])
+@admin_required
+def dispose_fixed_asset(asset_id: int) -> Any:
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict):
+        return jsonify({"error": "Request body must be JSON"}), 400
+    disposal_date = data.get("disposal_date")
+    disposal_price = data.get("disposal_price")
+    gain_loss_account_id = data.get("gain_loss_account_id")
+    if not disposal_date or disposal_price is None or gain_loss_account_id is None:
+        return jsonify({"error": "disposal_date, disposal_price, and gain_loss_account_id are required"}), 400
+    try:
+        return jsonify(service.dispose_fixed_asset(asset_id, disposal_date, disposal_price, gain_loss_account_id))
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400

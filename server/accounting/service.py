@@ -2481,3 +2481,125 @@ def delete_purchase_order(po_id: int) -> None:
             raise ValueError("Cannot delete a received purchase order")
         conn.execute("DELETE FROM purchase_orders WHERE id = ?", (po_id,))
         conn.commit()
+
+
+def fixed_asset_register(business_id: int) -> dict[str, Any]:
+    """Comprehensive fixed asset register with current book values."""
+    with get_db() as conn:
+        _require_business(conn, business_id)
+        rows = conn.execute(
+            """SELECT da.*, a.code AS asset_code, a.name AS asset_account_name,
+               aa.code AS accumulated_code, aa.name AS accumulated_account_name,
+               dp.code AS depreciation_code, dp.name AS depreciation_account_name
+               FROM depreciation_assets da
+               LEFT JOIN accounts a ON a.id = da.asset_account_id
+               LEFT JOIN accounts aa ON aa.id = da.accumulated_account_id
+               LEFT JOIN accounts dp ON dp.id = da.depreciation_account_id
+               WHERE da.business_id = ?
+               ORDER BY da.acquisition_date DESC, da.id DESC""",
+            (business_id,),
+        ).fetchall()
+        assets = []
+        total_cost = 0.0
+        total_accumulated = 0.0
+        total_book_value = 0.0
+        for row in rows:
+            asset = row_to_dict(row)
+            # Calculate accumulated depreciation from posted entries
+            dep_rows = conn.execute(
+                """SELECT COALESCE(SUM(jl.credit - jl.debit), 0) AS accumulated
+                   FROM journal_lines jl
+                   JOIN journal_entries je ON je.id = jl.entry_id
+                   WHERE je.business_id = ? AND je.status = 'posted'
+                   AND jl.account_id = ?""",
+                (business_id, asset["accumulated_account_id"]),
+            ).fetchone()
+            accumulated_dep = round(dep_rows["accumulated"], 2)
+            book_value = round(asset["cost"] - accumulated_dep, 2)
+            total_cost = round(total_cost + asset["cost"], 2)
+            total_accumulated = round(total_accumulated + accumulated_dep, 2)
+            total_book_value = round(total_book_value + book_value, 2)
+            asset["accumulated_depreciation"] = accumulated_dep
+            asset["book_value"] = book_value
+            assets.append(asset)
+        return {
+            "assets": assets,
+            "total_assets": len(assets),
+            "total_cost": total_cost,
+            "total_accumulated_depreciation": total_accumulated,
+            "total_book_value": total_book_value,
+        }
+
+
+def dispose_fixed_asset(asset_id: int, disposal_date: str, disposal_price: float, gain_loss_account_id: int) -> dict[str, Any]:
+    """Dispose of a fixed asset, creating journal entries for the disposal."""
+    disposal_date = _date(disposal_date, "disposal_date")
+    try:
+        disposal_price = float(disposal_price)
+    except (TypeError, ValueError):
+        raise ValueError("disposal_price must be a number")
+    try:
+        gain_loss_account_id = int(gain_loss_account_id)
+    except (TypeError, ValueError):
+        raise ValueError("gain_loss_account_id is required")
+    now = now_utc()
+    with get_db() as conn:
+        asset = conn.execute("SELECT * FROM depreciation_assets WHERE id = ?", (asset_id,)).fetchone()
+        if asset is None:
+            raise ValueError("Asset not found")
+        asset = row_to_dict(asset)
+        if asset["status"] not in ("active", "fully_depreciated"):
+            raise ValueError("Asset is not active or fully depreciated")
+        if _is_period_closed(conn, asset["business_id"], disposal_date):
+            raise ValueError("Cannot post to a closed accounting period")
+        # Verify gain/loss account
+        acct = conn.execute("SELECT id FROM accounts WHERE id = ? AND business_id = ?", (gain_loss_account_id, asset["business_id"])).fetchone()
+        if acct is None:
+            raise ValueError("Gain/loss account not found for this business")
+        # Calculate accumulated depreciation
+        dep_rows = conn.execute(
+            """SELECT COALESCE(SUM(jl.credit - jl.debit), 0) AS accumulated
+               FROM journal_lines jl
+               JOIN journal_entries je ON je.id = jl.entry_id
+               WHERE je.business_id = ? AND je.status = 'posted'
+               AND jl.account_id = ?""",
+            (asset["business_id"], asset["accumulated_account_id"]),
+        ).fetchone()
+        accumulated_dep = round(dep_rows["accumulated"], 2)
+        book_value = round(asset["cost"] - accumulated_dep, 2)
+        gain_loss = round(disposal_price - book_value, 2)
+        # Create disposal journal entry
+        entry_cursor = conn.execute(
+            "INSERT INTO journal_entries (business_id, entry_date, reference, description, status, created_at, updated_at) VALUES (?, ?, ?, ?, 'posted', ?, ?)",
+            (asset["business_id"], disposal_date, f"DISP-{asset['id']}", f"Disposal of {asset['name']}", now, now),
+        )
+        entry_id = entry_cursor.lastrowid
+        # Credit asset account (remove cost)
+        conn.execute("INSERT INTO journal_lines (entry_id, account_id, description, debit, credit) VALUES (?, ?, ?, ?, ?)",
+                     (entry_id, asset["asset_account_id"], f"Dispose {asset['name']}", 0, asset["cost"]))
+        # Debit accumulated depreciation (remove accumulated dep) - skip if 0
+        if accumulated_dep > 0:
+            conn.execute("INSERT INTO journal_lines (entry_id, account_id, description, debit, credit) VALUES (?, ?, ?, ?, ?)",
+                         (entry_id, asset["accumulated_account_id"], f"Dispose {asset['name']}", accumulated_dep, 0))
+        # Debit cash/receivable for disposal price - skip if 0
+        if disposal_price > 0:
+            conn.execute("INSERT INTO journal_lines (entry_id, account_id, description, debit, credit) VALUES (?, ?, ?, ?, ?)",
+                         (entry_id, gain_loss_account_id, f"Dispose {asset['name']}", disposal_price, 0))
+        # Credit/Debit gain or loss - skip if 0
+        if gain_loss > 0:
+            conn.execute("INSERT INTO journal_lines (entry_id, account_id, description, debit, credit) VALUES (?, ?, ?, ?, ?)",
+                         (entry_id, gain_loss_account_id, f"Gain on disposal {asset['name']}", 0, gain_loss))
+        elif gain_loss < 0:
+            conn.execute("INSERT INTO journal_lines (entry_id, account_id, description, debit, credit) VALUES (?, ?, ?, ?, ?)",
+                         (entry_id, gain_loss_account_id, f"Loss on disposal {asset['name']}", abs(gain_loss), 0))
+        # Mark asset as disposed
+        conn.execute("UPDATE depreciation_assets SET status = 'disposed', updated_at = ? WHERE id = ?", (now, asset_id))
+        conn.commit()
+        return {
+            "disposed": True,
+            "asset_id": asset_id,
+            "disposal_price": disposal_price,
+            "book_value": book_value,
+            "gain_loss": gain_loss,
+            "entry_id": entry_id,
+        }
