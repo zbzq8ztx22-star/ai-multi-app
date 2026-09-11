@@ -568,6 +568,29 @@ CREATE TABLE IF NOT EXISTS inventory_movements (
 
 CREATE INDEX IF NOT EXISTS idx_inventory_items_business ON inventory_items(business_id, sku);
 CREATE INDEX IF NOT EXISTS idx_inventory_movements_business ON inventory_movements(business_id, movement_date);
+
+CREATE TABLE IF NOT EXISTS projects (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    business_id INTEGER NOT NULL,
+    code TEXT NOT NULL,
+    name TEXT NOT NULL,
+    description TEXT NOT NULL DEFAULT '',
+    customer_id INTEGER,
+    start_date TEXT NOT NULL,
+    end_date TEXT,
+    budgeted_revenue REAL NOT NULL DEFAULT 0 CHECK(budgeted_revenue >= 0),
+    budgeted_cost REAL NOT NULL DEFAULT 0 CHECK(budgeted_cost >= 0),
+    status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active', 'completed', 'on_hold', 'cancelled')),
+    cost_center_id INTEGER,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    FOREIGN KEY (business_id) REFERENCES businesses(id) ON DELETE CASCADE,
+    FOREIGN KEY (customer_id) REFERENCES accounting_contacts(id),
+    FOREIGN KEY (cost_center_id) REFERENCES cost_centers(id) ON DELETE SET NULL,
+    UNIQUE(business_id, code)
+);
+
+CREATE INDEX IF NOT EXISTS idx_projects_business ON projects(business_id, status);
 """
 
 

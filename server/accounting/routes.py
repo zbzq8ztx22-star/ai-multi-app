@@ -898,3 +898,59 @@ def financial_ratios() -> Any:
         return jsonify(service.financial_ratios(business_id, as_of_date))
     except ValueError as exc:
         return jsonify({"error": str(exc)}), 400
+
+
+@bp.route("/projects", methods=["GET"])
+@login_required
+def projects() -> Any:
+    business_id = request.args.get("business_id", type=int)
+    if business_id is None:
+        return jsonify({"error": "business_id is required"}), 400
+    status = request.args.get("status")
+    try:
+        return jsonify(service.list_projects(business_id, status))
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+
+
+@bp.route("/projects", methods=["POST"])
+@admin_required
+def create_project() -> Any:
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict):
+        return jsonify({"error": "Request body must be JSON"}), 400
+    try:
+        return jsonify(service.create_project(data)), 201
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+
+
+@bp.route("/projects/<int:project_id>", methods=["PUT"])
+@admin_required
+def update_project(project_id: int) -> Any:
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict):
+        return jsonify({"error": "Request body must be JSON"}), 400
+    try:
+        return jsonify(service.update_project(project_id, data))
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+
+
+@bp.route("/projects/<int:project_id>", methods=["DELETE"])
+@admin_required
+def delete_project(project_id: int) -> Any:
+    try:
+        service.delete_project(project_id)
+        return jsonify({"deleted": True})
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+
+
+@bp.route("/projects/<int:project_id>/profitability", methods=["GET"])
+@login_required
+def project_profitability(project_id: int) -> Any:
+    try:
+        return jsonify(service.project_profitability(project_id))
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
