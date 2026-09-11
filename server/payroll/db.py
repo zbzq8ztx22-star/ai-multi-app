@@ -612,6 +612,23 @@ CREATE TABLE IF NOT EXISTS bank_transactions (
 
 CREATE INDEX IF NOT EXISTS idx_bank_transactions_business ON bank_transactions(business_id, transaction_date);
 CREATE INDEX IF NOT EXISTS idx_bank_transactions_account ON bank_transactions(account_id, cleared);
+
+CREATE TABLE IF NOT EXISTS sales_tax_rates (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    business_id INTEGER NOT NULL,
+    name TEXT NOT NULL,
+    rate REAL NOT NULL CHECK(rate >= 0 AND rate <= 100),
+    tax_account_id INTEGER,
+    is_default INTEGER NOT NULL DEFAULT 0 CHECK(is_default IN (0, 1)),
+    active INTEGER NOT NULL DEFAULT 1 CHECK(active IN (0, 1)),
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    FOREIGN KEY (business_id) REFERENCES businesses(id) ON DELETE CASCADE,
+    FOREIGN KEY (tax_account_id) REFERENCES accounts(id),
+    UNIQUE(business_id, name)
+);
+
+CREATE INDEX IF NOT EXISTS idx_sales_tax_rates_business ON sales_tax_rates(business_id, active);
 """
 
 

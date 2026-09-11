@@ -2213,3 +2213,131 @@ def bank_reconciliation_summary(business_id: int, account_id: int) -> dict[str, 
             "cleared_transactions": cleared,
             "uncleared_transactions": uncleared,
         }
+
+
+def list_sales_tax_rates(business_id: int) -> list[dict[str, Any]]:
+    with get_db() as conn:
+        _require_business(conn, business_id)
+        rows = conn.execute(
+            "SELECT * FROM sales_tax_rates WHERE business_id = ? ORDER BY is_default DESC, name",
+            (business_id,),
+        ).fetchall()
+        return [row_to_dict(row) for row in rows]
+
+
+def create_sales_tax_rate(data: dict[str, Any]) -> dict[str, Any]:
+    try:
+        business_id = int(data.get("business_id"))
+    except (TypeError, ValueError):
+        raise ValueError("business_id is required")
+    name = str(data.get("name", "")).strip()
+    if not name:
+        raise ValueError("name is required")
+    rate = float(data.get("rate", 0))
+    if rate < 0 or rate > 100:
+        raise ValueError("rate must be between 0 and 100")
+    tax_account_id = data.get("tax_account_id")
+    is_default = 1 if data.get("is_default") else 0
+    active = 1 if data.get("active", True) else 0
+    now = now_utc()
+    with get_db() as conn:
+        _require_business(conn, business_id)
+        if tax_account_id is not None:
+            acct = conn.execute("SELECT id FROM accounts WHERE id = ? AND business_id = ?", (tax_account_id, business_id)).fetchone()
+            if acct is None:
+                raise ValueError("Account not found for this business")
+        if is_default:
+            existing = conn.execute("SELECT id FROM sales_tax_rates WHERE business_id = ? AND is_default = 1", (business_id,)).fetchone()
+            if existing:
+                raise ValueError("Business already has a default tax rate")
+        try:
+            cursor = conn.execute(
+                "INSERT INTO sales_tax_rates (business_id, name, rate, tax_account_id, is_default, active, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                (business_id, name, rate, tax_account_id, is_default, active, now, now),
+            )
+        except sqlite3.IntegrityError:
+            raise ValueError("Tax rate with this name already exists for this business")
+        conn.commit()
+        return row_to_dict(conn.execute("SELECT * FROM sales_tax_rates WHERE id = ?", (cursor.lastrowid,)).fetchone())
+
+
+def update_sales_tax_rate(rate_id: int, data: dict[str, Any]) -> dict[str, Any]:
+    with get_db() as conn:
+        row = conn.execute("SELECT * FROM sales_tax_rates WHERE id = ?", (rate_id,)).fetchone()
+        if row is None:
+            raise ValueError("Tax rate not found")
+        updates: list[str] = []
+        params: list[Any] = []
+        if "name" in data:
+            updates.append("name = ?")
+            params.append(str(data["name"]).strip())
+        if "rate" in data:
+            rate = float(data["rate"])
+            if rate < 0 or rate > 100:
+                raise ValueError("rate must be between 0 and 100")
+            updates.append("rate = ?")
+            params.append(rate)
+        if "active" in data:
+            updates.append("active = ?")
+            params.append(1 if data["active"] else 0)
+        if "is_default" in data:
+            is_default = 1 if data["is_default"] else 0
+            if is_default and not row["is_default"]:
+                existing = conn.execute("SELECT id FROM sales_tax_rates WHERE business_id = ? AND is_default = 1 AND id != ?", (row["business_id"], rate_id)).fetchone()
+                if existing:
+                    raise ValueError("Business already has a default tax rate")
+            updates.append("is_default = ?")
+            params.append(is_default)
+        if updates:
+            updates.append("updated_at = ?")
+            params.append(now_utc())
+            conn.execute(f"UPDATE sales_tax_rates SET {', '.join(updates)} WHERE id = ?", [*params, rate_id])
+            conn.commit()
+        return row_to_dict(conn.execute("SELECT * FROM sales_tax_rates WHERE id = ?", (rate_id,)).fetchone())
+
+
+def delete_sales_tax_rate(rate_id: int) -> None:
+    with get_db() as conn:
+        if conn.execute("SELECT id FROM sales_tax_rates WHERE id = ?", (rate_id,)).fetchone() is None:
+            raise ValueError("Tax rate not found")
+        conn.execute("DELETE FROM sales_tax_rates WHERE id = ?", (rate_id,))
+        conn.commit()
+
+
+def calculate_sales_tax(amount: float, rate: float) -> dict[str, Any]:
+    if amount < 0:
+        raise ValueError("amount must be >= 0")
+    if rate < 0 or rate > 100:
+        raise ValueError("rate must be between 0 and 100")
+    tax_amount = round(amount * rate / 100, 2)
+    total = round(amount + tax_amount, 2)
+    return {"amount": amount, "rate": rate, "tax_amount": tax_amount, "total": total}
+
+
+def sales_tax_summary(business_id: int, start_date: str | None = None, end_date: str | None = None) -> dict[str, Any]:
+    """Summarize sales tax collected from invoices in a date range."""
+    with get_db() as conn:
+        _require_business(conn, business_id)
+        query = "SELECT amount, amount_paid, issue_date FROM invoices WHERE business_id = ? AND status != 'void'"
+        params: list[Any] = [business_id]
+        if start_date:
+            query += " AND issue_date >= ?"
+            params.append(start_date)
+        if end_date:
+            query += " AND issue_date <= ?"
+            params.append(end_date)
+        rows = conn.execute(query, params).fetchall()
+        rates = conn.execute("SELECT * FROM sales_tax_rates WHERE business_id = ? AND active = 1", (business_id,)).fetchall()
+        rates = [row_to_dict(r) for r in rates]
+        default_rate = next((r for r in rates if r["is_default"]), None)
+        default_rate_value = default_rate["rate"] if default_rate else 0
+        total_sales = round(sum(row["amount"] for row in rows), 2)
+        total_collected = round(sum(row["amount"] * default_rate_value / 100 for row in rows), 2) if default_rate_value > 0 else 0.0
+        return {
+            "total_sales": total_sales,
+            "default_rate": default_rate_value,
+            "total_tax_collected": total_collected,
+            "rate_count": len(rates),
+            "rates": rates,
+            "invoice_count": len(rows),
+        }

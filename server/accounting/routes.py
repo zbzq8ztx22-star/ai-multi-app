@@ -1040,3 +1040,76 @@ def bank_reconciliation_summary() -> Any:
         return jsonify(service.bank_reconciliation_summary(business_id, account_id))
     except ValueError as exc:
         return jsonify({"error": str(exc)}), 400
+
+
+@bp.route("/sales-tax-rates", methods=["GET"])
+@login_required
+def sales_tax_rates() -> Any:
+    business_id = request.args.get("business_id", type=int)
+    if business_id is None:
+        return jsonify({"error": "business_id is required"}), 400
+    try:
+        return jsonify(service.list_sales_tax_rates(business_id))
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+
+
+@bp.route("/sales-tax-rates", methods=["POST"])
+@admin_required
+def create_sales_tax_rate() -> Any:
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict):
+        return jsonify({"error": "Request body must be JSON"}), 400
+    try:
+        return jsonify(service.create_sales_tax_rate(data)), 201
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+
+
+@bp.route("/sales-tax-rates/<int:rate_id>", methods=["PUT"])
+@admin_required
+def update_sales_tax_rate(rate_id: int) -> Any:
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict):
+        return jsonify({"error": "Request body must be JSON"}), 400
+    try:
+        return jsonify(service.update_sales_tax_rate(rate_id, data))
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+
+
+@bp.route("/sales-tax-rates/<int:rate_id>", methods=["DELETE"])
+@admin_required
+def delete_sales_tax_rate(rate_id: int) -> Any:
+    try:
+        service.delete_sales_tax_rate(rate_id)
+        return jsonify({"deleted": True})
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+
+
+@bp.route("/sales-tax/calculate", methods=["GET"])
+@login_required
+def calculate_sales_tax() -> Any:
+    amount = request.args.get("amount", type=float)
+    rate = request.args.get("rate", type=float)
+    if amount is None or rate is None:
+        return jsonify({"error": "amount and rate are required"}), 400
+    try:
+        return jsonify(service.calculate_sales_tax(amount, rate))
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+
+
+@bp.route("/sales-tax/summary", methods=["GET"])
+@login_required
+def sales_tax_summary() -> Any:
+    business_id = request.args.get("business_id", type=int)
+    if business_id is None:
+        return jsonify({"error": "business_id is required"}), 400
+    start_date = request.args.get("start_date")
+    end_date = request.args.get("end_date")
+    try:
+        return jsonify(service.sales_tax_summary(business_id, start_date, end_date))
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
