@@ -1755,3 +1755,73 @@ def post_depreciation(asset_id: int, through_date: str) -> dict[str, Any]:
             conn.execute("UPDATE depreciation_assets SET status = 'fully_depreciated', updated_at = ? WHERE id = ?", (now, asset_id))
         conn.commit()
         return {"posted": True, "amount": total_dep, "entry_id": entry_id}
+
+
+def budget_variance_alerts(business_id: int, fiscal_year: int, threshold_percent: float = 80.0) -> dict[str, Any]:
+    """Check budgets against actual spending and return alerts for accounts that exceed or approach their budget."""
+    if threshold_percent < 0 or threshold_percent > 100:
+        raise ValueError("threshold_percent must be between 0 and 100")
+    with get_db() as conn:
+        _require_business(conn, business_id)
+        budgets = conn.execute(
+            "SELECT * FROM budgets WHERE business_id = ? AND fiscal_year = ?",
+            (business_id, fiscal_year),
+        ).fetchall()
+        if not budgets:
+            return {"fiscal_year": fiscal_year, "alerts": [], "total_budget": 0, "total_actual": 0}
+        alerts: list[dict[str, Any]] = []
+        total_budget = 0.0
+        total_actual = 0.0
+        for budget in budgets:
+            budget = row_to_dict(budget)
+            # Get actual spending for this account in this period
+            period_start = f"{fiscal_year}-01-01"
+            period_end = f"{fiscal_year}-12-31"
+            actual_rows = conn.execute(
+                """SELECT COALESCE(SUM(jl.debit - jl.credit), 0) AS actual
+                   FROM journal_lines jl
+                   JOIN journal_entries je ON je.id = jl.entry_id
+                   JOIN accounts a ON a.id = jl.account_id
+                   WHERE je.business_id = ? AND je.status = 'posted'
+                   AND je.entry_date >= ? AND je.entry_date <= ?
+                   AND a.id = ? AND a.account_type = 'expense'""",
+                (business_id, period_start, period_end, budget["account_id"]),
+            ).fetchone()
+            actual = round(actual_rows["actual"], 2)
+            budgeted = round(budget["budgeted_amount"], 2)
+            total_budget = round(total_budget + budgeted, 2)
+            total_actual = round(total_actual + actual, 2)
+            if budgeted <= 0:
+                continue
+            pct_used = round((actual / budgeted) * 100, 2)
+            alert_level = None
+            if actual > budgeted:
+                alert_level = "over_budget"
+            elif pct_used >= threshold_percent:
+                alert_level = "approaching"
+            if alert_level:
+                # Get account info
+                acct = conn.execute("SELECT code, name FROM accounts WHERE id = ?", (budget["account_id"],)).fetchone()
+                alerts.append({
+                    "budget_id": budget["id"],
+                    "account_id": budget["account_id"],
+                    "account_code": acct["code"] if acct else "",
+                    "account_name": acct["name"] if acct else "",
+                    "period": budget["period"],
+                    "budgeted": budgeted,
+                    "actual": actual,
+                    "variance": round(budgeted - actual, 2),
+                    "percent_used": pct_used,
+                    "alert_level": alert_level,
+                })
+        alerts.sort(key=lambda a: a["percent_used"], reverse=True)
+        total_variance = round(total_budget - total_actual, 2)
+        return {
+            "fiscal_year": fiscal_year,
+            "threshold_percent": threshold_percent,
+            "alerts": alerts,
+            "total_budget": total_budget,
+            "total_actual": total_actual,
+            "total_variance": total_variance,
+            "total_percent_used": round((total_actual / total_budget * 100) if total_budget > 0 else 0, 2),
+        }

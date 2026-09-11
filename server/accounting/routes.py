@@ -871,3 +871,17 @@ def post_depreciation(asset_id: int) -> Any:
         return jsonify(service.post_depreciation(asset_id, through_date))
     except ValueError as exc:
         return jsonify({"error": str(exc)}), 400
+
+
+@bp.route("/budgets/alerts", methods=["GET"])
+@login_required
+def budget_alerts() -> Any:
+    business_id = request.args.get("business_id", type=int)
+    fiscal_year = request.args.get("fiscal_year", type=int)
+    threshold = request.args.get("threshold_percent", default=80.0, type=float)
+    if business_id is None or fiscal_year is None:
+        return jsonify({"error": "business_id and fiscal_year are required"}), 400
+    try:
+        return jsonify(service.budget_variance_alerts(business_id, fiscal_year, threshold))
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
