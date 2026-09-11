@@ -629,6 +629,42 @@ CREATE TABLE IF NOT EXISTS sales_tax_rates (
 );
 
 CREATE INDEX IF NOT EXISTS idx_sales_tax_rates_business ON sales_tax_rates(business_id, active);
+
+CREATE TABLE IF NOT EXISTS purchase_orders (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    business_id INTEGER NOT NULL,
+    po_number TEXT NOT NULL,
+    order_date TEXT NOT NULL,
+    expected_date TEXT,
+    vendor_id INTEGER,
+    expense_account_id INTEGER NOT NULL,
+    payment_account_id INTEGER NOT NULL,
+    total_amount REAL NOT NULL DEFAULT 0 CHECK(total_amount >= 0),
+    status TEXT NOT NULL DEFAULT 'draft' CHECK(status IN ('draft', 'sent', 'received', 'cancelled')),
+    notes TEXT NOT NULL DEFAULT '',
+    journal_entry_id INTEGER,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    UNIQUE(business_id, po_number),
+    FOREIGN KEY (business_id) REFERENCES businesses(id) ON DELETE CASCADE,
+    FOREIGN KEY (vendor_id) REFERENCES accounting_contacts(id),
+    FOREIGN KEY (expense_account_id) REFERENCES accounts(id),
+    FOREIGN KEY (payment_account_id) REFERENCES accounts(id),
+    FOREIGN KEY (journal_entry_id) REFERENCES journal_entries(id)
+);
+
+CREATE TABLE IF NOT EXISTS purchase_order_lines (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    po_id INTEGER NOT NULL,
+    description TEXT NOT NULL,
+    quantity REAL NOT NULL CHECK(quantity > 0),
+    unit_price REAL NOT NULL CHECK(unit_price >= 0),
+    line_total REAL NOT NULL CHECK(line_total >= 0),
+    FOREIGN KEY (po_id) REFERENCES purchase_orders(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_purchase_orders_business ON purchase_orders(business_id, status);
+CREATE INDEX IF NOT EXISTS idx_purchase_order_lines_po ON purchase_order_lines(po_id);
 """
 
 

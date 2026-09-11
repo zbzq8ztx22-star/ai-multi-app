@@ -1113,3 +1113,50 @@ def sales_tax_summary() -> Any:
         return jsonify(service.sales_tax_summary(business_id, start_date, end_date))
     except ValueError as exc:
         return jsonify({"error": str(exc)}), 400
+
+
+@bp.route("/purchase-orders", methods=["GET"])
+@login_required
+def purchase_orders() -> Any:
+    business_id = request.args.get("business_id", type=int)
+    if business_id is None:
+        return jsonify({"error": "business_id is required"}), 400
+    status = request.args.get("status")
+    try:
+        return jsonify(service.list_purchase_orders(business_id, status))
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+
+
+@bp.route("/purchase-orders", methods=["POST"])
+@admin_required
+def create_purchase_order() -> Any:
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict):
+        return jsonify({"error": "Request body must be JSON"}), 400
+    try:
+        return jsonify(service.create_purchase_order(data)), 201
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+
+
+@bp.route("/purchase-orders/<int:po_id>/status", methods=["PUT"])
+@admin_required
+def update_purchase_order_status(po_id: int) -> Any:
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict) or "status" not in data:
+        return jsonify({"error": "status is required"}), 400
+    try:
+        return jsonify(service.update_purchase_order_status(po_id, data["status"]))
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+
+
+@bp.route("/purchase-orders/<int:po_id>", methods=["DELETE"])
+@admin_required
+def delete_purchase_order(po_id: int) -> Any:
+    try:
+        service.delete_purchase_order(po_id)
+        return jsonify({"deleted": True})
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
