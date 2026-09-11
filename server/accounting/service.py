@@ -2603,3 +2603,97 @@ def dispose_fixed_asset(asset_id: int, disposal_date: str, disposal_price: float
             "gain_loss": gain_loss,
             "entry_id": entry_id,
         }
+
+
+def cash_flow_forecast(business_id: int, months: int = 3) -> dict[str, Any]:
+    """Forecast cash flow based on outstanding receivables, payables, and recurring expenses."""
+    import datetime
+    if months < 1 or months > 12:
+        raise ValueError("months must be between 1 and 12")
+    with get_db() as conn:
+        _require_business(conn, business_id)
+        today = datetime.date.today()
+        # Get outstanding receivables from open invoices
+        inv_rows = conn.execute(
+            """SELECT invoices.due_date, invoices.amount, invoices.amount_paid
+               FROM invoices WHERE business_id = ? AND status = 'open'
+               ORDER BY due_date""",
+            (business_id,),
+        ).fetchall()
+        # Get outstanding payables from expenses paid with liability accounts
+        exp_rows = conn.execute(
+            """SELECT expenses.expense_date, expenses.amount, expenses.payment_account_id,
+               accounts.account_type AS payment_account_type
+               FROM expenses JOIN accounts ON accounts.id = expenses.payment_account_id
+               WHERE expenses.business_id = ?
+               ORDER BY expenses.expense_date""",
+            (business_id,),
+        ).fetchall()
+        # Get recurring expenses
+        recurring_rows = conn.execute(
+            """SELECT * FROM recurring_expenses WHERE business_id = ? AND active = 1""",
+            (business_id,),
+        ).fetchall()
+        # Build monthly forecast
+        forecast: list[dict[str, Any]] = []
+        for m in range(months):
+            month_date = today.replace(day=1)
+            for _ in range(m):
+                if month_date.month == 12:
+                    month_date = month_date.replace(year=month_date.year + 1, month=1)
+                else:
+                    month_date = month_date.replace(month=month_date.month + 1)
+            month_end = month_date.replace(day=28) if month_date.month == 2 else month_date.replace(day=30)
+            month_key = month_date.isoformat()[:7]
+            inflows = 0.0
+            outflows = 0.0
+            # Receivables due in this month
+            for inv in inv_rows:
+                balance = round(inv["amount"] - inv["amount_paid"], 2)
+                if balance <= 0:
+                    continue
+                due = datetime.date.fromisoformat(inv["due_date"])
+                if month_date <= due.replace(day=1) <= month_end:
+                    inflows = round(inflows + balance, 2)
+            # Payables due in this month
+            for exp in exp_rows:
+                if exp["payment_account_type"] != "liability":
+                    continue
+                exp_date = datetime.date.fromisoformat(exp["expense_date"])
+                if month_date <= exp_date.replace(day=1) <= month_end:
+                    outflows = round(outflows + exp["amount"], 2)
+            # Recurring expenses due in this month
+            for rec in recurring_rows:
+                rec = row_to_dict(rec)
+                next_date = datetime.date.fromisoformat(rec["next_due_date"]) if rec["next_due_date"] else None
+                if next_date and month_date <= next_date.replace(day=1) <= month_end:
+                    outflows = round(outflows + rec["amount"], 2)
+            net = round(inflows - outflows, 2)
+            forecast.append({
+                "month": month_key,
+                "expected_inflows": inflows,
+                "expected_outflows": outflows,
+                "net_cash_flow": net,
+            })
+        total_inflows = round(sum(f["expected_inflows"] for f in forecast), 2)
+        total_outflows = round(sum(f["expected_outflows"] for f in forecast), 2)
+        # Get current cash balance from asset accounts
+        cash_rows = conn.execute(
+            """SELECT COALESCE(SUM(CASE WHEN je.status = 'posted' THEN jl.debit - jl.credit ELSE 0 END), 0) AS balance
+               FROM accounts a
+               LEFT JOIN journal_lines jl ON jl.account_id = a.id
+               LEFT JOIN journal_entries je ON je.id = jl.entry_id AND je.business_id = a.business_id
+               WHERE a.business_id = ? AND a.account_type = 'asset' AND a.code LIKE '1%'""",
+            (business_id,),
+        ).fetchone()
+        current_cash = round(cash_rows["balance"], 2)
+        projected_ending = round(current_cash + total_inflows - total_outflows, 2)
+        return {
+            "current_cash_balance": current_cash,
+            "forecast_months": months,
+            "monthly_forecast": forecast,
+            "total_expected_inflows": total_inflows,
+            "total_expected_outflows": total_outflows,
+            "projected_net_cash_flow": round(total_inflows - total_outflows, 2),
+            "projected_ending_balance": projected_ending,
+        }

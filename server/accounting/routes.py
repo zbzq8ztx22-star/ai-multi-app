@@ -1189,3 +1189,16 @@ def dispose_fixed_asset(asset_id: int) -> Any:
         return jsonify(service.dispose_fixed_asset(asset_id, disposal_date, disposal_price, gain_loss_account_id))
     except ValueError as exc:
         return jsonify({"error": str(exc)}), 400
+
+
+@bp.route("/reports/cash-flow-forecast", methods=["GET"])
+@login_required
+def cash_flow_forecast() -> Any:
+    business_id = request.args.get("business_id", type=int)
+    if business_id is None:
+        return jsonify({"error": "business_id is required"}), 400
+    months = request.args.get("months", 3, type=int)
+    try:
+        return jsonify(service.cash_flow_forecast(business_id, months))
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
