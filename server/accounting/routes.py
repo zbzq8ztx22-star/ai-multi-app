@@ -1305,3 +1305,125 @@ def apply_chart_template(template_name: str) -> Any:
         return jsonify(service.apply_chart_template(int(business_id), template_name))
     except ValueError as exc:
         return jsonify({"error": str(exc)}), 400
+
+
+@bp.route("/export/1099.csv", methods=["GET"])
+@login_required
+def export_1099() -> Any:
+    business_id = request.args.get("business_id", type=int)
+    tax_year = request.args.get("tax_year", type=int)
+    if business_id is None or tax_year is None:
+        return jsonify({"error": "business_id and tax_year are required"}), 400
+    try:
+        report = service.report_1099(business_id, tax_year)
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    rows = [["Vendor Name", "Tax ID", "Total Payments"]]
+    for e in report["entries"]:
+        rows.append([e["vendor_name"], e["tax_id"], e["total_payments"]])
+    rows.append(["", "", f"Total: {report['total_payments']}"])
+    return _csv_response(rows, f"1099-{tax_year}.csv")
+
+
+@bp.route("/export/sales-tax-summary.csv", methods=["GET"])
+@login_required
+def export_sales_tax_summary() -> Any:
+    business_id = request.args.get("business_id", type=int)
+    if business_id is None:
+        return jsonify({"error": "business_id is required"}), 400
+    start_date = request.args.get("start_date")
+    end_date = request.args.get("end_date")
+    try:
+        report = service.sales_tax_summary(business_id, start_date, end_date)
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    rows = [["Metric", "Value"], ["Total Sales", report["total_sales"], ], ["Default Rate (%)", report["default_rate"]], ["Total Tax Collected", report["total_tax_collected"], ], ["Invoice Count", report["invoice_count"]], ["", ""], ["Tax Rate Name", "Rate (%)", "Default", "Active"]]
+    for r in report["rates"]:
+        rows.append([r["name"], r["rate"], "Yes" if r["is_default"] else "No", "Yes" if r["active"] else "No"])
+    return _csv_response(rows, "sales-tax-summary.csv")
+
+
+@bp.route("/export/aging-summary.csv", methods=["GET"])
+@login_required
+def export_aging_summary() -> Any:
+    business_id = request.args.get("business_id", type=int)
+    if business_id is None:
+        return jsonify({"error": "business_id is required"}), 400
+    try:
+        report = service.aging_summary(business_id)
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    rows = [["Aging Summary", f"As of {report['as_of']}"], ["", ""]]
+    rows.append(["Bucket", "Receivable", "Payable", "Net"])
+    for b in report["buckets"]:
+        rows.append([b["bucket"], b["receivable"], b["payable"], b["net"]])
+    rows.append(["", "", "", ""])
+    rows.append(["AR Total", report["ar_total"]])
+    rows.append(["AP Total", report["ap_total"]])
+    rows.append(["Net Cash Position", report["net_cash_position"]])
+    rows.append(["AR Invoice Count", report["ar_invoice_count"]])
+    rows.append(["AP Expense Count", report["ap_expense_count"]])
+    return _csv_response(rows, "aging-summary.csv")
+
+
+@bp.route("/export/financial-ratios.csv", methods=["GET"])
+@login_required
+def export_financial_ratios() -> Any:
+    business_id = request.args.get("business_id", type=int)
+    if business_id is None:
+        return jsonify({"error": "business_id is required"}), 400
+    try:
+        report = service.financial_ratios(business_id)
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    rows = [["Financial Ratios", f"As of {report['as_of_date']}"], ["", ""]]
+    rows.append(["Ratio", "Value"])
+    ratio_keys = ["current_ratio", "quick_ratio", "debt_ratio", "debt_to_equity", "equity_ratio", "return_on_assets", "return_on_equity", "profit_margin", "asset_turnover"]
+    for key in ratio_keys:
+        rows.append([key.replace("_", " ").title(), report.get(key)])
+    rows.append(["", ""])
+    rows.append(["Balance Sheet Summary", ""])
+    for key, value in report["balances"].items():
+        rows.append([key.replace("_", " ").title(), value])
+    return _csv_response(rows, "financial-ratios.csv")
+
+
+@bp.route("/export/fixed-asset-register.csv", methods=["GET"])
+@login_required
+def export_fixed_asset_register() -> Any:
+    business_id = request.args.get("business_id", type=int)
+    if business_id is None:
+        return jsonify({"error": "business_id is required"}), 400
+    try:
+        report = service.fixed_asset_register(business_id)
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    rows = [["Asset Name", "Cost", "Accumulated Depreciation", "Book Value", "Status", "Acquisition Date"]]
+    for a in report["assets"]:
+        rows.append([a["name"], a["cost"], a["accumulated_depreciation"], a["book_value"], a["status"], a["acquisition_date"]])
+    rows.append(["", "", "", "", "", ""])
+    rows.append(["Totals", report["total_cost"], report["total_accumulated_depreciation"], report["total_book_value"], "", ""])
+    return _csv_response(rows, "fixed-asset-register.csv")
+
+
+@bp.route("/export/cash-flow-forecast.csv", methods=["GET"])
+@login_required
+def export_cash_flow_forecast() -> Any:
+    business_id = request.args.get("business_id", type=int)
+    if business_id is None:
+        return jsonify({"error": "business_id is required"}), 400
+    months = request.args.get("months", 3, type=int)
+    try:
+        report = service.cash_flow_forecast(business_id, months)
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    rows = [["Month", "Expected Inflows", "Expected Outflows", "Net Cash Flow"]]
+    for m in report["monthly_forecast"]:
+        rows.append([m["month"], m["expected_inflows"], m["expected_outflows"], m["net_cash_flow"]])
+    rows.append(["", "", "", ""])
+    rows.append(["Current Cash Balance", report["current_cash_balance"]])
+    rows.append(["Total Expected Inflows", report["total_expected_inflows"]])
+    rows.append(["Total Expected Outflows", report["total_expected_outflows"]])
+    rows.append(["Projected Net Cash Flow", report["projected_net_cash_flow"]])
+    rows.append(["Projected Ending Balance", report["projected_ending_balance"]])
+    return _csv_response(rows, "cash-flow-forecast.csv")
