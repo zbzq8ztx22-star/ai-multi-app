@@ -2811,3 +2811,164 @@ def report_1099(business_id: int, tax_year: int) -> dict[str, Any]:
             "total_payments": total_payments,
             "entries": entries,
         }
+
+
+CHART_TEMPLATES: dict[str, list[dict[str, str]]] = {
+    "sole_proprietor": [
+        {"code": "1000", "name": "Cash", "account_type": "asset"},
+        {"code": "1100", "name": "Accounts Receivable", "account_type": "asset"},
+        {"code": "1200", "name": "Inventory", "account_type": "asset"},
+        {"code": "1500", "name": "Equipment", "account_type": "asset"},
+        {"code": "1510", "name": "Accumulated Depreciation", "account_type": "asset"},
+        {"code": "2000", "name": "Accounts Payable", "account_type": "liability"},
+        {"code": "2100", "name": "Sales Tax Payable", "account_type": "liability"},
+        {"code": "2200", "name": "Loans Payable", "account_type": "liability"},
+        {"code": "3000", "name": "Owner's Capital", "account_type": "equity"},
+        {"code": "3100", "name": "Owner's Draw", "account_type": "equity"},
+        {"code": "4000", "name": "Sales Revenue", "account_type": "revenue"},
+        {"code": "4100", "name": "Service Revenue", "account_type": "revenue"},
+        {"code": "5000", "name": "Cost of Goods Sold", "account_type": "expense"},
+        {"code": "6000", "name": "Rent Expense", "account_type": "expense"},
+        {"code": "6100", "name": "Utilities Expense", "account_type": "expense"},
+        {"code": "6200", "name": "Wages Expense", "account_type": "expense"},
+        {"code": "6300", "name": "Office Supplies", "account_type": "expense"},
+        {"code": "6400", "name": "Advertising Expense", "account_type": "expense"},
+        {"code": "6500", "name": "Insurance Expense", "account_type": "expense"},
+        {"code": "6600", "name": "Depreciation Expense", "account_type": "expense"},
+    ],
+    "llc": [
+        {"code": "1000", "name": "Cash", "account_type": "asset"},
+        {"code": "1100", "name": "Accounts Receivable", "account_type": "asset"},
+        {"code": "1200", "name": "Inventory", "account_type": "asset"},
+        {"code": "1500", "name": "Equipment", "account_type": "asset"},
+        {"code": "1510", "name": "Accumulated Depreciation", "account_type": "asset"},
+        {"code": "2000", "name": "Accounts Payable", "account_type": "liability"},
+        {"code": "2100", "name": "Sales Tax Payable", "account_type": "liability"},
+        {"code": "2200", "name": "Loans Payable", "account_type": "liability"},
+        {"code": "2300", "name": "Payroll Liabilities", "account_type": "liability"},
+        {"code": "3000", "name": "Member Capital", "account_type": "equity"},
+        {"code": "3100", "name": "Member Distributions", "account_type": "equity"},
+        {"code": "3200", "name": "Retained Earnings", "account_type": "equity"},
+        {"code": "4000", "name": "Sales Revenue", "account_type": "revenue"},
+        {"code": "4100", "name": "Service Revenue", "account_type": "revenue"},
+        {"code": "5000", "name": "Cost of Goods Sold", "account_type": "expense"},
+        {"code": "6000", "name": "Rent Expense", "account_type": "expense"},
+        {"code": "6100", "name": "Utilities Expense", "account_type": "expense"},
+        {"code": "6200", "name": "Salaries Expense", "account_type": "expense"},
+        {"code": "6300", "name": "Office Supplies", "account_type": "expense"},
+        {"code": "6400", "name": "Advertising Expense", "account_type": "expense"},
+        {"code": "6500", "name": "Insurance Expense", "account_type": "expense"},
+        {"code": "6600", "name": "Depreciation Expense", "account_type": "expense"},
+        {"code": "6700", "name": "Legal & Professional", "account_type": "expense"},
+    ],
+    "corporation": [
+        {"code": "1000", "name": "Cash", "account_type": "asset"},
+        {"code": "1100", "name": "Accounts Receivable", "account_type": "asset"},
+        {"code": "1200", "name": "Inventory", "account_type": "asset"},
+        {"code": "1300", "name": "Prepaid Expenses", "account_type": "asset"},
+        {"code": "1500", "name": "Equipment", "account_type": "asset"},
+        {"code": "1510", "name": "Accumulated Depreciation", "account_type": "asset"},
+        {"code": "1600", "name": "Buildings", "account_type": "asset"},
+        {"code": "1610", "name": "Accumulated Depreciation - Buildings", "account_type": "asset"},
+        {"code": "2000", "name": "Accounts Payable", "account_type": "liability"},
+        {"code": "2100", "name": "Sales Tax Payable", "account_type": "liability"},
+        {"code": "2200", "name": "Loans Payable", "account_type": "liability"},
+        {"code": "2300", "name": "Payroll Tax Liabilities", "account_type": "liability"},
+        {"code": "2400", "name": "Accrued Expenses", "account_type": "liability"},
+        {"code": "3000", "name": "Common Stock", "account_type": "equity"},
+        {"code": "3100", "name": "Additional Paid-in Capital", "account_type": "equity"},
+        {"code": "3200", "name": "Retained Earnings", "account_type": "equity"},
+        {"code": "3300", "name": "Dividends", "account_type": "equity"},
+        {"code": "4000", "name": "Sales Revenue", "account_type": "revenue"},
+        {"code": "4100", "name": "Service Revenue", "account_type": "revenue"},
+        {"code": "4200", "name": "Interest Income", "account_type": "revenue"},
+        {"code": "5000", "name": "Cost of Goods Sold", "account_type": "expense"},
+        {"code": "6000", "name": "Rent Expense", "account_type": "expense"},
+        {"code": "6100", "name": "Utilities Expense", "account_type": "expense"},
+        {"code": "6200", "name": "Salaries Expense", "account_type": "expense"},
+        {"code": "6300", "name": "Office Supplies", "account_type": "expense"},
+        {"code": "6400", "name": "Advertising Expense", "account_type": "expense"},
+        {"code": "6500", "name": "Insurance Expense", "account_type": "expense"},
+        {"code": "6600", "name": "Depreciation Expense", "account_type": "expense"},
+        {"code": "6700", "name": "Legal & Professional", "account_type": "expense"},
+        {"code": "6800", "name": "Income Tax Expense", "account_type": "expense"},
+    ],
+    "nonprofit": [
+        {"code": "1000", "name": "Cash", "account_type": "asset"},
+        {"code": "1100", "name": "Grants Receivable", "account_type": "asset"},
+        {"code": "1200", "name": "Pledges Receivable", "account_type": "asset"},
+        {"code": "1500", "name": "Equipment", "account_type": "asset"},
+        {"code": "1510", "name": "Accumulated Depreciation", "account_type": "asset"},
+        {"code": "2000", "name": "Accounts Payable", "account_type": "liability"},
+        {"code": "2200", "name": "Loans Payable", "account_type": "liability"},
+        {"code": "2300", "name": "Payroll Liabilities", "account_type": "liability"},
+        {"code": "3000", "name": "Unrestricted Net Assets", "account_type": "equity"},
+        {"code": "3100", "name": "Temporarily Restricted Net Assets", "account_type": "equity"},
+        {"code": "3200", "name": "Permanently Restricted Net Assets", "account_type": "equity"},
+        {"code": "4000", "name": "Donation Revenue", "account_type": "revenue"},
+        {"code": "4100", "name": "Grant Revenue", "account_type": "revenue"},
+        {"code": "4200", "name": "Program Service Revenue", "account_type": "revenue"},
+        {"code": "5000", "name": "Program Expenses", "account_type": "expense"},
+        {"code": "6000", "name": "Management & General", "account_type": "expense"},
+        {"code": "6100", "name": "Fundraising Expense", "account_type": "expense"},
+        {"code": "6200", "name": "Rent Expense", "account_type": "expense"},
+        {"code": "6300", "name": "Utilities Expense", "account_type": "expense"},
+        {"code": "6400", "name": "Salaries Expense", "account_type": "expense"},
+        {"code": "6500", "name": "Office Supplies", "account_type": "expense"},
+        {"code": "6600", "name": "Insurance Expense", "account_type": "expense"},
+    ],
+}
+
+
+def list_chart_templates() -> list[dict[str, Any]]:
+    """List available chart of accounts templates."""
+    result = []
+    for key, accounts in CHART_TEMPLATES.items():
+        result.append({
+            "template": key,
+            "account_count": len(accounts),
+            "account_types": list(set(a["account_type"] for a in accounts)),
+        })
+    return result
+
+
+def get_chart_template(template_name: str) -> dict[str, Any]:
+    """Get the details of a specific chart of accounts template."""
+    template_name = template_name.strip().lower()
+    if template_name not in CHART_TEMPLATES:
+        raise ValueError(f"Template '{template_name}' not found. Available: {', '.join(CHART_TEMPLATES.keys())}")
+    return {
+        "template": template_name,
+        "accounts": CHART_TEMPLATES[template_name],
+        "account_count": len(CHART_TEMPLATES[template_name]),
+    }
+
+
+def apply_chart_template(business_id: int, template_name: str) -> dict[str, Any]:
+    """Apply a chart of accounts template to a business, creating all accounts."""
+    template_name = template_name.strip().lower()
+    if template_name not in CHART_TEMPLATES:
+        raise ValueError(f"Template '{template_name}' not found. Available: {', '.join(CHART_TEMPLATES.keys())}")
+    now = now_utc()
+    created = []
+    skipped = []
+    with get_db() as conn:
+        _require_business(conn, business_id)
+        for acct in CHART_TEMPLATES[template_name]:
+            existing = conn.execute("SELECT id FROM accounts WHERE business_id = ? AND code = ?", (business_id, acct["code"])).fetchone()
+            if existing:
+                skipped.append(acct)
+                continue
+            cursor = conn.execute(
+                "INSERT INTO accounts (business_id, code, name, account_type, active, created_at, updated_at) VALUES (?, ?, ?, ?, 1, ?, ?)",
+                (business_id, acct["code"], acct["name"], acct["account_type"], now, now),
+            )
+            created.append({**acct, "id": cursor.lastrowid})
+        conn.commit()
+        return {
+            "template": template_name,
+            "created_count": len(created),
+            "skipped_count": len(skipped),
+            "created": created,
+            "skipped": skipped,
+        }

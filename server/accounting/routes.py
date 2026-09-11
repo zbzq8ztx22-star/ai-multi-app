@@ -1275,3 +1275,33 @@ def list_1099_vendors() -> Any:
         return jsonify(service.list_1099_vendors(business_id))
     except ValueError as exc:
         return jsonify({"error": str(exc)}), 400
+
+
+@bp.route("/chart-templates", methods=["GET"])
+@login_required
+def list_chart_templates() -> Any:
+    return jsonify(service.list_chart_templates())
+
+
+@bp.route("/chart-templates/<template_name>", methods=["GET"])
+@login_required
+def get_chart_template(template_name: str) -> Any:
+    try:
+        return jsonify(service.get_chart_template(template_name))
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+
+
+@bp.route("/chart-templates/<template_name>/apply", methods=["POST"])
+@admin_required
+def apply_chart_template(template_name: str) -> Any:
+    business_id = request.args.get("business_id", type=int)
+    if business_id is None:
+        data = request.get_json(silent=True) or {}
+        business_id = data.get("business_id")
+    if business_id is None:
+        return jsonify({"error": "business_id is required"}), 400
+    try:
+        return jsonify(service.apply_chart_template(int(business_id), template_name))
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
