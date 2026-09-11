@@ -232,6 +232,40 @@ def create_expense() -> Any:
     return _json_write(service.create_expense)
 
 
+@bp.route("/expenses/pending", methods=["GET"])
+@login_required
+def pending_expenses() -> Any:
+    business_id = request.args.get("business_id", type=int)
+    if business_id is None:
+        return jsonify({"error": "business_id is required"}), 400
+    try:
+        return jsonify(service.list_pending_expenses(business_id))
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+
+
+@bp.route("/expenses/<int:expense_id>/approve", methods=["PUT"])
+@admin_required
+def approve_expense(expense_id: int) -> Any:
+    data = request.get_json(silent=True) or {}
+    approver = data.get("approver", "")
+    try:
+        return jsonify(service.approve_expense(expense_id, approver))
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+
+
+@bp.route("/expenses/<int:expense_id>/reject", methods=["PUT"])
+@admin_required
+def reject_expense(expense_id: int) -> Any:
+    data = request.get_json(silent=True) or {}
+    approver = data.get("approver", "")
+    try:
+        return jsonify(service.reject_expense(expense_id, approver))
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+
+
 @bp.route("/reports/profit-loss", methods=["GET"])
 @login_required
 def profit_loss() -> Any:

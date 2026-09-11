@@ -363,6 +363,9 @@ def create_expense(data: dict[str, Any]) -> dict[str, Any]:
         raise ValueError("description and a positive amount are required")
     expense_date = _date(data.get("expense_date"), "expense_date")
     vendor_id = data.get("vendor_id") or None
+    approval_status = str(data.get("approval_status", "approved")).strip().lower()
+    if approval_status not in ("pending", "approved", "rejected"):
+        raise ValueError("approval_status must be one of: pending, approved, rejected")
     now = now_utc()
     with get_db() as conn:
         _require_business(conn, business_id)
@@ -373,13 +376,63 @@ def create_expense(data: dict[str, Any]) -> dict[str, Any]:
         expense_account = _account_for_business(conn, business_id, data.get("expense_account_id"), {"expense"}, "expense_account_id")
         payment_account = _account_for_business(conn, business_id, data.get("payment_account_id"), {"asset", "liability"}, "payment_account_id")
         reference = str(data.get("reference", "")).strip()
-        entry_id = _post_operation_entry(conn, business_id, expense_date, reference, description, [(expense_account, amount, 0), (payment_account, 0, amount)])
+        if approval_status == "approved":
+            entry_id = _post_operation_entry(conn, business_id, expense_date, reference, description, [(expense_account, amount, 0), (payment_account, 0, amount)])
+        else:
+            entry_id = None
         cursor = conn.execute("""INSERT INTO expenses
-            (business_id, vendor_id, expense_date, reference, description, amount, expense_account_id, payment_account_id, journal_entry_id, created_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            (business_id, vendor_id, expense_date, reference, description, amount, expense_account, payment_account, entry_id, now))
+            (business_id, vendor_id, expense_date, reference, description, amount, expense_account_id, payment_account_id, journal_entry_id, approval_status, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (business_id, vendor_id, expense_date, reference, description, amount, expense_account, payment_account, entry_id, approval_status, now))
         conn.commit()
         return row_to_dict(conn.execute("SELECT * FROM expenses WHERE id = ?", (cursor.lastrowid,)).fetchone())
+
+
+def approve_expense(expense_id: int, approver: str) -> dict[str, Any]:
+    """Approve a pending expense and create the journal entry."""
+    now = now_utc()
+    with get_db() as conn:
+        row = conn.execute("SELECT * FROM expenses WHERE id = ?", (expense_id,)).fetchone()
+        if row is None:
+            raise ValueError("Expense not found")
+        row = row_to_dict(row)
+        if row["approval_status"] != "pending":
+            raise ValueError("Expense is not pending")
+        if _is_period_closed(conn, row["business_id"], row["expense_date"]):
+            raise ValueError("Cannot post to a closed accounting period")
+        entry_id = _post_operation_entry(conn, row["business_id"], row["expense_date"], row["reference"], row["description"],
+                                          [(row["expense_account_id"], row["amount"], 0), (row["payment_account_id"], 0, row["amount"])])
+        conn.execute("UPDATE expenses SET approval_status = 'approved', approved_by = ?, approved_at = ?, journal_entry_id = ? WHERE id = ?",
+                     (approver, now, entry_id, expense_id))
+        conn.commit()
+        return row_to_dict(conn.execute("SELECT * FROM expenses WHERE id = ?", (expense_id,)).fetchone())
+
+
+def reject_expense(expense_id: int, approver: str) -> dict[str, Any]:
+    """Reject a pending expense."""
+    now = now_utc()
+    with get_db() as conn:
+        row = conn.execute("SELECT * FROM expenses WHERE id = ?", (expense_id,)).fetchone()
+        if row is None:
+            raise ValueError("Expense not found")
+        row = row_to_dict(row)
+        if row["approval_status"] != "pending":
+            raise ValueError("Expense is not pending")
+        conn.execute("UPDATE expenses SET approval_status = 'rejected', approved_by = ?, approved_at = ? WHERE id = ?",
+                     (approver, now, expense_id))
+        conn.commit()
+        return row_to_dict(conn.execute("SELECT * FROM expenses WHERE id = ?", (expense_id,)).fetchone())
+
+
+def list_pending_expenses(business_id: int) -> list[dict[str, Any]]:
+    """List all pending expenses for a business."""
+    with get_db() as conn:
+        _require_business(conn, business_id)
+        rows = conn.execute("""SELECT expenses.*, accounting_contacts.name AS vendor_name FROM expenses
+            LEFT JOIN accounting_contacts ON accounting_contacts.id = expenses.vendor_id
+            WHERE expenses.business_id = ? AND expenses.approval_status = 'pending'
+            ORDER BY expenses.expense_date DESC, expenses.id DESC""", (business_id,)).fetchall()
+        return [row_to_dict(row) for row in rows]
 
 
 def _account_balances(conn: sqlite3.Connection, business_id: int, end_date: str, start_date: str | None = None) -> list[dict[str, Any]]:
