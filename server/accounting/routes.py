@@ -885,3 +885,16 @@ def budget_alerts() -> Any:
         return jsonify(service.budget_variance_alerts(business_id, fiscal_year, threshold))
     except ValueError as exc:
         return jsonify({"error": str(exc)}), 400
+
+
+@bp.route("/reports/financial-ratios", methods=["GET"])
+@login_required
+def financial_ratios() -> Any:
+    business_id = request.args.get("business_id", type=int)
+    if business_id is None:
+        return jsonify({"error": "business_id is required"}), 400
+    as_of_date = request.args.get("as_of_date")
+    try:
+        return jsonify(service.financial_ratios(business_id, as_of_date))
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400

@@ -1825,3 +1825,64 @@ def budget_variance_alerts(business_id: int, fiscal_year: int, threshold_percent
             "total_variance": total_variance,
             "total_percent_used": round((total_actual / total_budget * 100) if total_budget > 0 else 0, 2),
         }
+
+
+def financial_ratios(business_id: int, as_of_date: str | None = None) -> dict[str, Any]:
+    """Calculate key financial ratios from posted entries."""
+    import datetime
+    if as_of_date is None:
+        as_of_date = datetime.date.today().isoformat()
+    with get_db() as conn:
+        _require_business(conn, business_id)
+        # Get balances by account type as of as_of_date
+        rows = conn.execute(
+            """SELECT a.account_type,
+                   ROUND(COALESCE(SUM(CASE WHEN je.status = 'posted' AND je.entry_date <= ? THEN jl.debit ELSE 0 END), 0), 2) AS total_debits,
+                   ROUND(COALESCE(SUM(CASE WHEN je.status = 'posted' AND je.entry_date <= ? THEN jl.credit ELSE 0 END), 0), 2) AS total_credits
+               FROM accounts a
+               LEFT JOIN journal_lines jl ON jl.account_id = a.id
+               LEFT JOIN journal_entries je ON je.id = jl.entry_id AND je.business_id = a.business_id
+               WHERE a.business_id = ?
+               GROUP BY a.account_type""",
+            (as_of_date, as_of_date, business_id),
+        ).fetchall()
+        balances: dict[str, float] = {"asset": 0.0, "liability": 0.0, "equity": 0.0, "revenue": 0.0, "expense": 0.0}
+        for row in rows:
+            atype = row["account_type"]
+            if atype in ("asset", "expense"):
+                balances[atype] = round(row["total_debits"] - row["total_credits"], 2)
+            else:
+                balances[atype] = round(row["total_credits"] - row["total_debits"], 2)
+        total_assets = balances["asset"]
+        total_liabilities = balances["liability"]
+        total_equity = balances["equity"]
+        total_revenue = balances["revenue"]
+        total_expenses = balances["expense"]
+        net_income = round(total_revenue - total_expenses, 2)
+
+        # Current assets (asset accounts, simplified: all assets)
+        current_assets = total_assets
+        # Current liabilities (simplified: all liabilities)
+        current_liabilities = total_liabilities
+
+        ratios: dict[str, Any] = {
+            "as_of_date": as_of_date,
+            "balances": {
+                "total_assets": total_assets,
+                "total_liabilities": total_liabilities,
+                "total_equity": total_equity,
+                "total_revenue": total_revenue,
+                "total_expenses": total_expenses,
+                "net_income": net_income,
+            },
+            "current_ratio": round(current_assets / current_liabilities, 2) if current_liabilities > 0 else None,
+            "quick_ratio": round((current_assets * 0.9) / current_liabilities, 2) if current_liabilities > 0 else None,
+            "debt_ratio": round(total_liabilities / total_assets, 2) if total_assets > 0 else None,
+            "debt_to_equity": round(total_liabilities / total_equity, 2) if total_equity > 0 else None,
+            "equity_ratio": round(total_equity / total_assets, 2) if total_assets > 0 else None,
+            "return_on_assets": round((net_income / total_assets) * 100, 2) if total_assets > 0 else None,
+            "return_on_equity": round((net_income / total_equity) * 100, 2) if total_equity > 0 else None,
+            "profit_margin": round((net_income / total_revenue) * 100, 2) if total_revenue > 0 else None,
+            "asset_turnover": round(total_revenue / total_assets, 2) if total_assets > 0 else None,
+        }
+        return ratios
