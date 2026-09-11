@@ -30,6 +30,7 @@ from cost_centers import init_app as init_cost_centers
 from currency import init_app as init_currency
 from dashboard import init_app as init_dashboard
 from entities import init_app as init_entities
+from inventory import init_app as init_inventory
 from payroll import init_app as init_payroll
 from tax import init_app as init_tax
 
@@ -514,6 +515,7 @@ def create_app(test_config: dict[str, Any] | None = None) -> Flask:
     init_backup(app)
     init_currency(app)
     init_cost_centers(app)
+    init_inventory(app)
     return app
 
 

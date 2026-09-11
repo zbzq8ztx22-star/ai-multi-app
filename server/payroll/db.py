@@ -528,6 +528,46 @@ CREATE TABLE IF NOT EXISTS depreciation_assets (
 );
 
 CREATE INDEX IF NOT EXISTS idx_depreciation_assets_business ON depreciation_assets(business_id, status);
+
+CREATE TABLE IF NOT EXISTS inventory_items (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    business_id INTEGER NOT NULL,
+    sku TEXT NOT NULL,
+    name TEXT NOT NULL,
+    description TEXT NOT NULL DEFAULT '',
+    unit_cost REAL NOT NULL DEFAULT 0 CHECK(unit_cost >= 0),
+    unit_price REAL NOT NULL DEFAULT 0 CHECK(unit_price >= 0),
+    quantity_on_hand REAL NOT NULL DEFAULT 0,
+    reorder_point REAL NOT NULL DEFAULT 0 CHECK(reorder_point >= 0),
+    inventory_account_id INTEGER,
+    cogs_account_id INTEGER,
+    sales_account_id INTEGER,
+    active INTEGER NOT NULL DEFAULT 1 CHECK(active IN (0, 1)),
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    FOREIGN KEY (business_id) REFERENCES businesses(id) ON DELETE CASCADE,
+    FOREIGN KEY (inventory_account_id) REFERENCES accounts(id),
+    FOREIGN KEY (cogs_account_id) REFERENCES accounts(id),
+    FOREIGN KEY (sales_account_id) REFERENCES accounts(id),
+    UNIQUE(business_id, sku)
+);
+
+CREATE TABLE IF NOT EXISTS inventory_movements (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    business_id INTEGER NOT NULL,
+    item_id INTEGER NOT NULL,
+    movement_type TEXT NOT NULL CHECK(movement_type IN ('purchase', 'sale', 'adjustment', 'return')),
+    quantity REAL NOT NULL,
+    unit_cost REAL NOT NULL DEFAULT 0,
+    reference TEXT NOT NULL DEFAULT '',
+    movement_date TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    FOREIGN KEY (business_id) REFERENCES businesses(id) ON DELETE CASCADE,
+    FOREIGN KEY (item_id) REFERENCES inventory_items(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_inventory_items_business ON inventory_items(business_id, sku);
+CREATE INDEX IF NOT EXISTS idx_inventory_movements_business ON inventory_movements(business_id, movement_date);
 """
 
 
