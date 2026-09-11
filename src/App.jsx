@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react'
-import { MessageSquare, Image, Calculator, FileText, Wallet, Menu, X, LogOut, Loader2, BookOpen, LayoutDashboard, Settings as SettingsIcon } from 'lucide-react'
+import { MessageSquare, Image, Calculator, FileText, Wallet, Menu, X, LogOut, Loader2, BookOpen, LayoutDashboard, Settings as SettingsIcon, Code } from 'lucide-react'
 import { apiGet, apiPost } from './api'
 import Accounting from './components/Accounting'
 import Chat from './components/Chat'
+import CodeGen from './components/CodeGen'
 import Dashboard from './components/Dashboard'
 import Docs from './components/Docs'
 import Login from './components/Login'
@@ -36,6 +37,7 @@ function App() {
     { id: 'dashboard', name: 'Dashboard', icon: LayoutDashboard },
     { id: 'chat', name: 'Chat', icon: MessageSquare },
     { id: 'vision', name: 'Vision', icon: Image },
+    { id: 'code', name: 'Code', icon: Code },
     { id: 'tax', name: 'Tax', icon: Calculator },
     { id: 'accounting', name: 'Accounting', icon: BookOpen },
     { id: 'docs', name: 'Documents', icon: FileText },
@@ -120,6 +122,7 @@ function App() {
         {activeTab === 'dashboard' && <Dashboard onNavigate={setActiveTab} />}
         {activeTab === 'chat' && <Chat />}
         {activeTab === 'vision' && <Vision />}
+        {activeTab === 'code' && <CodeGen />}
         {activeTab === 'tax' && <Tax />}
         {activeTab === 'accounting' && <Accounting />}
         {activeTab === 'docs' && <Docs />}

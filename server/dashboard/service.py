@@ -65,3 +65,76 @@ def overview() -> dict[str, Any]:
                 "returns": recent_returns,
             },
         }
+
+
+def trends(business_id: int, months: int = 6) -> dict[str, Any]:
+    """Month-over-month revenue, expenses, and net income trends."""
+    import datetime
+    if months < 1 or months > 24:
+        raise ValueError("months must be between 1 and 24")
+    with get_db() as conn:
+        row = conn.execute("SELECT id FROM businesses WHERE id = ?", (business_id,)).fetchone()
+        if row is None:
+            raise ValueError("Business not found")
+        today = datetime.date.today()
+        results: list[dict[str, Any]] = []
+        for i in range(months - 1, -1, -1):
+            month_date = datetime.date(today.year, today.month, 1)
+            for _ in range(i):
+                if month_date.month == 1:
+                    month_date = month_date.replace(year=month_date.year - 1, month=12)
+                else:
+                    month_date = month_date.replace(month=month_date.month - 1)
+            month_start = month_date.isoformat()
+            if month_date.month == 12:
+                month_end = month_date.replace(day=31).isoformat()
+            else:
+                next_month = month_date.replace(month=month_date.month + 1)
+                month_end = (next_month - datetime.timedelta(days=1)).isoformat()
+            # Revenue: credits - debits for revenue accounts
+            rev_rows = conn.execute(
+                """SELECT jl.debit, jl.credit FROM journal_lines jl
+                   JOIN journal_entries je ON je.id = jl.entry_id
+                   JOIN accounts a ON a.id = jl.account_id
+                   WHERE je.business_id = ? AND je.status = 'posted'
+                   AND je.entry_date >= ? AND je.entry_date <= ?
+                   AND a.account_type = 'revenue'""",
+                (business_id, month_start, month_end),
+            ).fetchall()
+            revenue = round(sum(r["credit"] - r["debit"] for r in rev_rows), 2)
+            # Expenses: debits - credits for expense accounts
+            exp_rows = conn.execute(
+                """SELECT jl.debit, jl.credit FROM journal_lines jl
+                   JOIN journal_entries je ON je.id = jl.entry_id
+                   JOIN accounts a ON a.id = jl.account_id
+                   WHERE je.business_id = ? AND je.status = 'posted'
+                   AND je.entry_date >= ? AND je.entry_date <= ?
+                   AND a.account_type = 'expense'""",
+                (business_id, month_start, month_end),
+            ).fetchall()
+            expenses = round(sum(r["debit"] - r["credit"] for r in exp_rows), 2)
+            net_income = round(revenue - expenses, 2)
+            results.append({
+                "month": month_start,
+                "revenue": revenue,
+                "expenses": expenses,
+                "net_income": net_income,
+            })
+        # Calculate trends
+        if len(results) >= 2:
+            prev = results[-2]
+            curr = results[-1]
+            rev_change = round(curr["revenue"] - prev["revenue"], 2)
+            exp_change = round(curr["expenses"] - prev["expenses"], 2)
+            ni_change = round(curr["net_income"] - prev["net_income"], 2)
+        else:
+            rev_change = exp_change = ni_change = 0.0
+        return {
+            "business_id": business_id,
+            "months": results,
+            "changes": {
+                "revenue": rev_change,
+                "expenses": exp_change,
+                "net_income": ni_change,
+            },
+        }

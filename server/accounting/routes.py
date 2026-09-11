@@ -136,6 +136,78 @@ def create_invoice() -> Any:
     return _json_write(service.create_invoice)
 
 
+@bp.route("/invoices/<int:invoice_id>", methods=["GET"])
+@login_required
+def invoice_detail(invoice_id: int) -> Any:
+    invoice = service.get_invoice_detail(invoice_id)
+    if invoice is None:
+        return jsonify({"error": "Invoice not found"}), 404
+    return jsonify(invoice)
+
+
+@bp.route("/invoices/<int:invoice_id>/void", methods=["PUT"])
+@admin_required
+def void_invoice(invoice_id: int) -> Any:
+    try:
+        return jsonify(service.void_invoice(invoice_id))
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+
+
+@bp.route("/invoices/<int:invoice_id>/print", methods=["GET"])
+@login_required
+def print_invoice(invoice_id: int) -> Any:
+    invoice = service.get_invoice_detail(invoice_id)
+    if invoice is None:
+        return jsonify({"error": "Invoice not found"}), 404
+    balance = round(invoice["amount"] - invoice["amount_paid"], 2)
+    html = f"""<!DOCTYPE html>
+<html><head><meta charset="utf-8"><title>Invoice {invoice['invoice_number']}</title>
+<style>
+  body {{ font-family: Arial, sans-serif; max-width: 800px; margin: 40px auto; padding: 20px; color: #1a1a1a; }}
+  .header {{ display: flex; justify-content: space-between; border-bottom: 2px solid #333; padding-bottom: 20px; }}
+  .business-name {{ font-size: 24px; font-weight: bold; }}
+  .invoice-title {{ font-size: 32px; color: #666; text-align: right; }}
+  .details {{ margin: 30px 0; display: flex; justify-content: space-between; }}
+  .label {{ color: #666; font-size: 12px; text-transform: uppercase; }}
+  .value {{ font-size: 16px; margin-top: 4px; }}
+  table {{ width: 100%; border-collapse: collapse; margin: 20px 0; }}
+  th {{ text-align: left; padding: 10px; border-bottom: 2px solid #333; color: #666; font-size: 12px; text-transform: uppercase; }}
+  td {{ padding: 10px; border-bottom: 1px solid #ddd; }}
+  .totals {{ margin-left: auto; width: 300px; }}
+  .totals-row {{ display: flex; justify-content: space-between; padding: 8px 0; }}
+  .total {{ font-weight: bold; font-size: 18px; border-top: 2px solid #333; padding-top: 10px; }}
+  .status {{ display: inline-block; padding: 4px 12px; border-radius: 4px; font-size: 12px; font-weight: bold; text-transform: uppercase; }}
+  .status-open {{ background: #fef3c7; color: #92400e; }}
+  .status-paid {{ background: #d1fae5; color: #065f46; }}
+  .status-void {{ background: #fee2e2; color: #991b1b; }}
+  @media print {{ .no-print {{ display: none; }} }}
+</style></head><body>
+  <div class="no-print" style="text-align:right;margin-bottom:20px"><button onclick="window.print()" style="padding:10px 20px;font-size:14px;cursor:pointer">Print / Save as PDF</button></div>
+  <div class="header">
+    <div><div class="business-name">{invoice['business_name']}</div>{f"<div>{invoice['business_dba']}</div>" if invoice.get('business_dba') else ""}</div>
+    <div class="invoice-title">INVOICE</div>
+  </div>
+  <div class="details">
+    <div><div class="label">Bill To</div><div class="value">{invoice['customer_name']}</div>{f"<div>{invoice['customer_email']}</div>" if invoice.get('customer_email') else ""}</div>
+    <div style="text-align:right">
+      <div class="label">Invoice Number</div><div class="value">{invoice['invoice_number']}</div>
+      <div class="label" style="margin-top:10px">Issue Date</div><div class="value">{invoice['issue_date']}</div>
+      <div class="label" style="margin-top:10px">Due Date</div><div class="value">{invoice['due_date']}</div>
+      <div class="label" style="margin-top:10px">Status</div><div class="value"><span class="status status-{invoice['status']}">{invoice['status']}</span></div>
+    </div>
+  </div>
+  <table><thead><tr><th>Description</th><th style="text-align:right">Amount</th></tr></thead>
+  <tbody><tr><td>{invoice['description']}</td><td style="text-align:right">${invoice['amount']:,.2f}</td></tr></tbody></table>
+  <div class="totals">
+    <div class="totals-row"><span>Subtotal</span><span>${invoice['amount']:,.2f}</span></div>
+    <div class="totals-row"><span>Paid</span><span>${invoice['amount_paid']:,.2f}</span></div>
+    <div class="totals-row total"><span>Balance Due</span><span>${balance:,.2f}</span></div>
+  </div>
+</body></html>"""
+    return Response(html, mimetype="text/html")
+
+
 @bp.route("/payments", methods=["POST"])
 @admin_required
 def create_payment() -> Any:
@@ -158,6 +230,40 @@ def expenses() -> Any:
 @admin_required
 def create_expense() -> Any:
     return _json_write(service.create_expense)
+
+
+@bp.route("/expenses/pending", methods=["GET"])
+@login_required
+def pending_expenses() -> Any:
+    business_id = request.args.get("business_id", type=int)
+    if business_id is None:
+        return jsonify({"error": "business_id is required"}), 400
+    try:
+        return jsonify(service.list_pending_expenses(business_id))
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+
+
+@bp.route("/expenses/<int:expense_id>/approve", methods=["PUT"])
+@admin_required
+def approve_expense(expense_id: int) -> Any:
+    data = request.get_json(silent=True) or {}
+    approver = data.get("approver", "")
+    try:
+        return jsonify(service.approve_expense(expense_id, approver))
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+
+
+@bp.route("/expenses/<int:expense_id>/reject", methods=["PUT"])
+@admin_required
+def reject_expense(expense_id: int) -> Any:
+    data = request.get_json(silent=True) or {}
+    approver = data.get("approver", "")
+    try:
+        return jsonify(service.reject_expense(expense_id, approver))
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
 
 
 @bp.route("/reports/profit-loss", methods=["GET"])
@@ -479,3 +585,857 @@ def export_general_ledger() -> Any:
     for line in ledger:
         rows.append([line["entry_date"], line["reference"], line["entry_description"], line["account_code"], line["account_name"], line["description"], line["debit"], line["credit"]])
     return _csv_response(rows, "general-ledger.csv")
+
+
+@bp.route("/recurring-expenses", methods=["GET"])
+@login_required
+def recurring_expenses() -> Any:
+    business_id = request.args.get("business_id", type=int)
+    if business_id is None:
+        return jsonify({"error": "business_id is required"}), 400
+    try:
+        return jsonify(service.list_recurring_expenses(business_id))
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+
+
+@bp.route("/recurring-expenses", methods=["POST"])
+@admin_required
+def create_recurring_expense() -> Any:
+    return _json_write(service.create_recurring_expense)
+
+
+@bp.route("/recurring-expenses/<int:recurring_id>", methods=["PUT"])
+@admin_required
+def update_recurring_expense(recurring_id: int) -> Any:
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict):
+        return jsonify({"error": "Request body must be JSON"}), 400
+    try:
+        return jsonify(service.update_recurring_expense(recurring_id, data))
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+
+
+@bp.route("/recurring-expenses/<int:recurring_id>", methods=["DELETE"])
+@admin_required
+def delete_recurring_expense(recurring_id: int) -> Any:
+    try:
+        service.delete_recurring_expense(recurring_id)
+        return jsonify({"deleted": True})
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+
+
+@bp.route("/recurring-expenses/post-due", methods=["POST"])
+@admin_required
+def post_due_recurring() -> Any:
+    business_id = request.args.get("business_id", type=int)
+    as_of = request.args.get("as_of")
+    if business_id is None:
+        return jsonify({"error": "business_id is required"}), 400
+    try:
+        posted = service.post_due_recurring_expenses(business_id, as_of)
+        return jsonify({"posted_count": len(posted), "posted": posted})
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+
+
+@bp.route("/closing-periods", methods=["GET"])
+@login_required
+def closing_periods() -> Any:
+    business_id = request.args.get("business_id", type=int)
+    if business_id is None:
+        return jsonify({"error": "business_id is required"}), 400
+    try:
+        return jsonify(service.list_closing_periods(business_id))
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+
+
+@bp.route("/closing-periods", methods=["POST"])
+@admin_required
+def close_period() -> Any:
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict):
+        return jsonify({"error": "Request body must be JSON"}), 400
+    try:
+        return jsonify(service.close_period(data)), 201
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+
+
+@bp.route("/closing-periods/<int:period_id>", methods=["DELETE"])
+@admin_required
+def reopen_period(period_id: int) -> Any:
+    try:
+        service.reopen_period(period_id)
+        return jsonify({"reopened": True})
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+
+
+@bp.route("/closing-periods/check", methods=["GET"])
+@login_required
+def check_period_closed() -> Any:
+    business_id = request.args.get("business_id", type=int)
+    entry_date = request.args.get("entry_date", "")
+    if business_id is None:
+        return jsonify({"error": "business_id is required"}), 400
+    try:
+        return jsonify(service.is_period_closed(business_id, entry_date))
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+
+
+@bp.route("/statements/customer/<int:customer_id>", methods=["GET"])
+@login_required
+def customer_statement(customer_id: int) -> Any:
+    business_id = request.args.get("business_id", type=int)
+    start_date = request.args.get("start_date")
+    end_date = request.args.get("end_date")
+    if business_id is None:
+        return jsonify({"error": "business_id is required"}), 400
+    try:
+        return jsonify(service.customer_statement(business_id, customer_id, start_date, end_date))
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+
+
+@bp.route("/statements/vendor/<int:vendor_id>", methods=["GET"])
+@login_required
+def vendor_statement(vendor_id: int) -> Any:
+    business_id = request.args.get("business_id", type=int)
+    start_date = request.args.get("start_date")
+    end_date = request.args.get("end_date")
+    if business_id is None:
+        return jsonify({"error": "business_id is required"}), 400
+    try:
+        return jsonify(service.vendor_statement(business_id, vendor_id, start_date, end_date))
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+
+
+@bp.route("/account-groups", methods=["GET"])
+@login_required
+def account_groups() -> Any:
+    business_id = request.args.get("business_id", type=int)
+    if business_id is None:
+        return jsonify({"error": "business_id is required"}), 400
+    try:
+        return jsonify(service.list_account_groups(business_id))
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+
+
+@bp.route("/account-groups", methods=["POST"])
+@admin_required
+def create_account_group() -> Any:
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict):
+        return jsonify({"error": "Request body must be JSON"}), 400
+    try:
+        return jsonify(service.create_account_group(data)), 201
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+
+
+@bp.route("/account-groups/<int:group_id>", methods=["PUT"])
+@admin_required
+def update_account_group(group_id: int) -> Any:
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict):
+        return jsonify({"error": "Request body must be JSON"}), 400
+    try:
+        return jsonify(service.update_account_group(group_id, data))
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+
+
+@bp.route("/account-groups/<int:group_id>", methods=["DELETE"])
+@admin_required
+def delete_account_group(group_id: int) -> Any:
+    try:
+        service.delete_account_group(group_id)
+        return jsonify({"deleted": True})
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+
+
+@bp.route("/accounts/<int:account_id>/assign-group", methods=["PUT"])
+@admin_required
+def assign_account_to_group(account_id: int) -> Any:
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict):
+        return jsonify({"error": "Request body must be JSON"}), 400
+    group_id = data.get("group_id")
+    if group_id is None:
+        return jsonify({"error": "group_id is required"}), 400
+    try:
+        return jsonify(service.assign_account_to_group(account_id, int(group_id)))
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+
+
+@bp.route("/payment-terms", methods=["GET"])
+@login_required
+def payment_terms() -> Any:
+    business_id = request.args.get("business_id", type=int)
+    if business_id is None:
+        return jsonify({"error": "business_id is required"}), 400
+    try:
+        return jsonify(service.list_payment_terms(business_id))
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+
+
+@bp.route("/payment-terms", methods=["POST"])
+@admin_required
+def create_payment_terms() -> Any:
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict):
+        return jsonify({"error": "Request body must be JSON"}), 400
+    try:
+        return jsonify(service.create_payment_terms(data)), 201
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+
+
+@bp.route("/payment-terms/<int:term_id>", methods=["PUT"])
+@admin_required
+def update_payment_terms(term_id: int) -> Any:
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict):
+        return jsonify({"error": "Request body must be JSON"}), 400
+    try:
+        return jsonify(service.update_payment_terms(term_id, data))
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+
+
+@bp.route("/payment-terms/<int:term_id>", methods=["DELETE"])
+@admin_required
+def delete_payment_terms(term_id: int) -> Any:
+    try:
+        service.delete_payment_terms(term_id)
+        return jsonify({"deleted": True})
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+
+
+@bp.route("/credit-notes", methods=["GET"])
+@login_required
+def credit_notes() -> Any:
+    business_id = request.args.get("business_id", type=int)
+    if business_id is None:
+        return jsonify({"error": "business_id is required"}), 400
+    try:
+        return jsonify(service.list_credit_notes(business_id))
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+
+
+@bp.route("/credit-notes", methods=["POST"])
+@admin_required
+def create_credit_note() -> Any:
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict):
+        return jsonify({"error": "Request body must be JSON"}), 400
+    try:
+        return jsonify(service.create_credit_note(data)), 201
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+
+
+@bp.route("/credit-notes/<int:credit_id>/void", methods=["PUT"])
+@admin_required
+def void_credit_note(credit_id: int) -> Any:
+    business_id = request.args.get("business_id", type=int)
+    if business_id is None:
+        return jsonify({"error": "business_id is required"}), 400
+    try:
+        return jsonify(service.void_credit_note(business_id, credit_id))
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+
+
+@bp.route("/depreciation-assets", methods=["GET"])
+@login_required
+def depreciation_assets() -> Any:
+    business_id = request.args.get("business_id", type=int)
+    if business_id is None:
+        return jsonify({"error": "business_id is required"}), 400
+    try:
+        return jsonify(service.list_depreciation_assets(business_id))
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+
+
+@bp.route("/depreciation-assets", methods=["POST"])
+@admin_required
+def create_depreciation_asset() -> Any:
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict):
+        return jsonify({"error": "Request body must be JSON"}), 400
+    try:
+        return jsonify(service.create_depreciation_asset(data)), 201
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+
+
+@bp.route("/depreciation-assets/<int:asset_id>/schedule", methods=["GET"])
+@login_required
+def depreciation_schedule(asset_id: int) -> Any:
+    try:
+        return jsonify(service.depreciation_schedule(asset_id))
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+
+
+@bp.route("/depreciation-assets/<int:asset_id>/post", methods=["POST"])
+@admin_required
+def post_depreciation(asset_id: int) -> Any:
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict):
+        return jsonify({"error": "Request body must be JSON"}), 400
+    through_date = data.get("through_date")
+    if not through_date:
+        return jsonify({"error": "through_date is required"}), 400
+    try:
+        return jsonify(service.post_depreciation(asset_id, through_date))
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+
+
+@bp.route("/budgets/alerts", methods=["GET"])
+@login_required
+def budget_alerts() -> Any:
+    business_id = request.args.get("business_id", type=int)
+    fiscal_year = request.args.get("fiscal_year", type=int)
+    threshold = request.args.get("threshold_percent", default=80.0, type=float)
+    if business_id is None or fiscal_year is None:
+        return jsonify({"error": "business_id and fiscal_year are required"}), 400
+    try:
+        return jsonify(service.budget_variance_alerts(business_id, fiscal_year, threshold))
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+
+
+@bp.route("/reports/financial-ratios", methods=["GET"])
+@login_required
+def financial_ratios() -> Any:
+    business_id = request.args.get("business_id", type=int)
+    if business_id is None:
+        return jsonify({"error": "business_id is required"}), 400
+    as_of_date = request.args.get("as_of_date")
+    try:
+        return jsonify(service.financial_ratios(business_id, as_of_date))
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+
+
+@bp.route("/projects", methods=["GET"])
+@login_required
+def projects() -> Any:
+    business_id = request.args.get("business_id", type=int)
+    if business_id is None:
+        return jsonify({"error": "business_id is required"}), 400
+    status = request.args.get("status")
+    try:
+        return jsonify(service.list_projects(business_id, status))
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+
+
+@bp.route("/projects", methods=["POST"])
+@admin_required
+def create_project() -> Any:
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict):
+        return jsonify({"error": "Request body must be JSON"}), 400
+    try:
+        return jsonify(service.create_project(data)), 201
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+
+
+@bp.route("/projects/<int:project_id>", methods=["PUT"])
+@admin_required
+def update_project(project_id: int) -> Any:
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict):
+        return jsonify({"error": "Request body must be JSON"}), 400
+    try:
+        return jsonify(service.update_project(project_id, data))
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+
+
+@bp.route("/projects/<int:project_id>", methods=["DELETE"])
+@admin_required
+def delete_project(project_id: int) -> Any:
+    try:
+        service.delete_project(project_id)
+        return jsonify({"deleted": True})
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+
+
+@bp.route("/projects/<int:project_id>/profitability", methods=["GET"])
+@login_required
+def project_profitability(project_id: int) -> Any:
+    try:
+        return jsonify(service.project_profitability(project_id))
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+
+
+@bp.route("/reports/aging-summary", methods=["GET"])
+@login_required
+def aging_summary() -> Any:
+    business_id = request.args.get("business_id", type=int)
+    if business_id is None:
+        return jsonify({"error": "business_id is required"}), 400
+    as_of = request.args.get("as_of")
+    try:
+        return jsonify(service.aging_summary(business_id, as_of))
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+
+
+@bp.route("/bank-transactions", methods=["GET"])
+@login_required
+def bank_transactions() -> Any:
+    business_id = request.args.get("business_id", type=int)
+    if business_id is None:
+        return jsonify({"error": "business_id is required"}), 400
+    account_id = request.args.get("account_id", type=int)
+    cleared = request.args.get("cleared")
+    cleared_flag = None
+    if cleared is not None:
+        cleared_flag = cleared.lower() == "true"
+    try:
+        return jsonify(service.list_bank_transactions(business_id, account_id, cleared_flag))
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+
+
+@bp.route("/bank-transactions", methods=["POST"])
+@admin_required
+def create_bank_transaction() -> Any:
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict):
+        return jsonify({"error": "Request body must be JSON"}), 400
+    try:
+        return jsonify(service.create_bank_transaction(data)), 201
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+
+
+@bp.route("/bank-transactions/<int:tx_id>/match", methods=["PUT"])
+@admin_required
+def match_bank_transaction(tx_id: int) -> Any:
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict) or "journal_line_id" not in data:
+        return jsonify({"error": "journal_line_id is required"}), 400
+    try:
+        return jsonify(service.match_bank_transaction(tx_id, int(data["journal_line_id"])))
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+
+
+@bp.route("/bank-transactions/<int:tx_id>/unmatch", methods=["PUT"])
+@admin_required
+def unmatch_bank_transaction(tx_id: int) -> Any:
+    try:
+        return jsonify(service.unmatch_bank_transaction(tx_id))
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+
+
+@bp.route("/bank-transactions/<int:tx_id>", methods=["DELETE"])
+@admin_required
+def delete_bank_transaction(tx_id: int) -> Any:
+    try:
+        service.delete_bank_transaction(tx_id)
+        return jsonify({"deleted": True})
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+
+
+@bp.route("/bank-reconciliation/summary", methods=["GET"])
+@login_required
+def bank_reconciliation_summary() -> Any:
+    business_id = request.args.get("business_id", type=int)
+    account_id = request.args.get("account_id", type=int)
+    if business_id is None or account_id is None:
+        return jsonify({"error": "business_id and account_id are required"}), 400
+    try:
+        return jsonify(service.bank_reconciliation_summary(business_id, account_id))
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+
+
+@bp.route("/sales-tax-rates", methods=["GET"])
+@login_required
+def sales_tax_rates() -> Any:
+    business_id = request.args.get("business_id", type=int)
+    if business_id is None:
+        return jsonify({"error": "business_id is required"}), 400
+    try:
+        return jsonify(service.list_sales_tax_rates(business_id))
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+
+
+@bp.route("/sales-tax-rates", methods=["POST"])
+@admin_required
+def create_sales_tax_rate() -> Any:
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict):
+        return jsonify({"error": "Request body must be JSON"}), 400
+    try:
+        return jsonify(service.create_sales_tax_rate(data)), 201
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+
+
+@bp.route("/sales-tax-rates/<int:rate_id>", methods=["PUT"])
+@admin_required
+def update_sales_tax_rate(rate_id: int) -> Any:
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict):
+        return jsonify({"error": "Request body must be JSON"}), 400
+    try:
+        return jsonify(service.update_sales_tax_rate(rate_id, data))
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+
+
+@bp.route("/sales-tax-rates/<int:rate_id>", methods=["DELETE"])
+@admin_required
+def delete_sales_tax_rate(rate_id: int) -> Any:
+    try:
+        service.delete_sales_tax_rate(rate_id)
+        return jsonify({"deleted": True})
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+
+
+@bp.route("/sales-tax/calculate", methods=["GET"])
+@login_required
+def calculate_sales_tax() -> Any:
+    amount = request.args.get("amount", type=float)
+    rate = request.args.get("rate", type=float)
+    if amount is None or rate is None:
+        return jsonify({"error": "amount and rate are required"}), 400
+    try:
+        return jsonify(service.calculate_sales_tax(amount, rate))
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+
+
+@bp.route("/sales-tax/summary", methods=["GET"])
+@login_required
+def sales_tax_summary() -> Any:
+    business_id = request.args.get("business_id", type=int)
+    if business_id is None:
+        return jsonify({"error": "business_id is required"}), 400
+    start_date = request.args.get("start_date")
+    end_date = request.args.get("end_date")
+    try:
+        return jsonify(service.sales_tax_summary(business_id, start_date, end_date))
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+
+
+@bp.route("/purchase-orders", methods=["GET"])
+@login_required
+def purchase_orders() -> Any:
+    business_id = request.args.get("business_id", type=int)
+    if business_id is None:
+        return jsonify({"error": "business_id is required"}), 400
+    status = request.args.get("status")
+    try:
+        return jsonify(service.list_purchase_orders(business_id, status))
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+
+
+@bp.route("/purchase-orders", methods=["POST"])
+@admin_required
+def create_purchase_order() -> Any:
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict):
+        return jsonify({"error": "Request body must be JSON"}), 400
+    try:
+        return jsonify(service.create_purchase_order(data)), 201
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+
+
+@bp.route("/purchase-orders/<int:po_id>/status", methods=["PUT"])
+@admin_required
+def update_purchase_order_status(po_id: int) -> Any:
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict) or "status" not in data:
+        return jsonify({"error": "status is required"}), 400
+    try:
+        return jsonify(service.update_purchase_order_status(po_id, data["status"]))
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+
+
+@bp.route("/purchase-orders/<int:po_id>", methods=["DELETE"])
+@admin_required
+def delete_purchase_order(po_id: int) -> Any:
+    try:
+        service.delete_purchase_order(po_id)
+        return jsonify({"deleted": True})
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+
+
+@bp.route("/reports/fixed-asset-register", methods=["GET"])
+@login_required
+def fixed_asset_register() -> Any:
+    business_id = request.args.get("business_id", type=int)
+    if business_id is None:
+        return jsonify({"error": "business_id is required"}), 400
+    try:
+        return jsonify(service.fixed_asset_register(business_id))
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+
+
+@bp.route("/depreciation-assets/<int:asset_id>/dispose", methods=["POST"])
+@admin_required
+def dispose_fixed_asset(asset_id: int) -> Any:
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict):
+        return jsonify({"error": "Request body must be JSON"}), 400
+    disposal_date = data.get("disposal_date")
+    disposal_price = data.get("disposal_price")
+    gain_loss_account_id = data.get("gain_loss_account_id")
+    if not disposal_date or disposal_price is None or gain_loss_account_id is None:
+        return jsonify({"error": "disposal_date, disposal_price, and gain_loss_account_id are required"}), 400
+    try:
+        return jsonify(service.dispose_fixed_asset(asset_id, disposal_date, disposal_price, gain_loss_account_id))
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+
+
+@bp.route("/reports/cash-flow-forecast", methods=["GET"])
+@login_required
+def cash_flow_forecast() -> Any:
+    business_id = request.args.get("business_id", type=int)
+    if business_id is None:
+        return jsonify({"error": "business_id is required"}), 400
+    months = request.args.get("months", 3, type=int)
+    try:
+        return jsonify(service.cash_flow_forecast(business_id, months))
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+
+
+@bp.route("/reports/1099", methods=["GET"])
+@login_required
+def report_1099() -> Any:
+    business_id = request.args.get("business_id", type=int)
+    tax_year = request.args.get("tax_year", type=int)
+    if business_id is None or tax_year is None:
+        return jsonify({"error": "business_id and tax_year are required"}), 400
+    try:
+        return jsonify(service.report_1099(business_id, tax_year))
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+
+
+@bp.route("/contacts/<int:contact_id>/1099", methods=["PUT"])
+@admin_required
+def update_contact_1099(contact_id: int) -> Any:
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict):
+        return jsonify({"error": "Request body must be JSON"}), 400
+    is_1099 = data.get("is_1099", False)
+    tax_id = data.get("tax_id", "")
+    try:
+        return jsonify(service.update_contact_1099(contact_id, is_1099, tax_id))
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+
+
+@bp.route("/contacts/1099-vendors", methods=["GET"])
+@login_required
+def list_1099_vendors() -> Any:
+    business_id = request.args.get("business_id", type=int)
+    if business_id is None:
+        return jsonify({"error": "business_id is required"}), 400
+    try:
+        return jsonify(service.list_1099_vendors(business_id))
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+
+
+@bp.route("/chart-templates", methods=["GET"])
+@login_required
+def list_chart_templates() -> Any:
+    return jsonify(service.list_chart_templates())
+
+
+@bp.route("/chart-templates/<template_name>", methods=["GET"])
+@login_required
+def get_chart_template(template_name: str) -> Any:
+    try:
+        return jsonify(service.get_chart_template(template_name))
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+
+
+@bp.route("/chart-templates/<template_name>/apply", methods=["POST"])
+@admin_required
+def apply_chart_template(template_name: str) -> Any:
+    business_id = request.args.get("business_id", type=int)
+    if business_id is None:
+        data = request.get_json(silent=True) or {}
+        business_id = data.get("business_id")
+    if business_id is None:
+        return jsonify({"error": "business_id is required"}), 400
+    try:
+        return jsonify(service.apply_chart_template(int(business_id), template_name))
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+
+
+@bp.route("/export/1099.csv", methods=["GET"])
+@login_required
+def export_1099() -> Any:
+    business_id = request.args.get("business_id", type=int)
+    tax_year = request.args.get("tax_year", type=int)
+    if business_id is None or tax_year is None:
+        return jsonify({"error": "business_id and tax_year are required"}), 400
+    try:
+        report = service.report_1099(business_id, tax_year)
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    rows = [["Vendor Name", "Tax ID", "Total Payments"]]
+    for e in report["entries"]:
+        rows.append([e["vendor_name"], e["tax_id"], e["total_payments"]])
+    rows.append(["", "", f"Total: {report['total_payments']}"])
+    return _csv_response(rows, f"1099-{tax_year}.csv")
+
+
+@bp.route("/export/sales-tax-summary.csv", methods=["GET"])
+@login_required
+def export_sales_tax_summary() -> Any:
+    business_id = request.args.get("business_id", type=int)
+    if business_id is None:
+        return jsonify({"error": "business_id is required"}), 400
+    start_date = request.args.get("start_date")
+    end_date = request.args.get("end_date")
+    try:
+        report = service.sales_tax_summary(business_id, start_date, end_date)
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    rows = [["Metric", "Value"], ["Total Sales", report["total_sales"], ], ["Default Rate (%)", report["default_rate"]], ["Total Tax Collected", report["total_tax_collected"], ], ["Invoice Count", report["invoice_count"]], ["", ""], ["Tax Rate Name", "Rate (%)", "Default", "Active"]]
+    for r in report["rates"]:
+        rows.append([r["name"], r["rate"], "Yes" if r["is_default"] else "No", "Yes" if r["active"] else "No"])
+    return _csv_response(rows, "sales-tax-summary.csv")
+
+
+@bp.route("/export/aging-summary.csv", methods=["GET"])
+@login_required
+def export_aging_summary() -> Any:
+    business_id = request.args.get("business_id", type=int)
+    if business_id is None:
+        return jsonify({"error": "business_id is required"}), 400
+    try:
+        report = service.aging_summary(business_id)
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    rows = [["Aging Summary", f"As of {report['as_of']}"], ["", ""]]
+    rows.append(["Bucket", "Receivable", "Payable", "Net"])
+    for b in report["buckets"]:
+        rows.append([b["bucket"], b["receivable"], b["payable"], b["net"]])
+    rows.append(["", "", "", ""])
+    rows.append(["AR Total", report["ar_total"]])
+    rows.append(["AP Total", report["ap_total"]])
+    rows.append(["Net Cash Position", report["net_cash_position"]])
+    rows.append(["AR Invoice Count", report["ar_invoice_count"]])
+    rows.append(["AP Expense Count", report["ap_expense_count"]])
+    return _csv_response(rows, "aging-summary.csv")
+
+
+@bp.route("/export/financial-ratios.csv", methods=["GET"])
+@login_required
+def export_financial_ratios() -> Any:
+    business_id = request.args.get("business_id", type=int)
+    if business_id is None:
+        return jsonify({"error": "business_id is required"}), 400
+    try:
+        report = service.financial_ratios(business_id)
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    rows = [["Financial Ratios", f"As of {report['as_of_date']}"], ["", ""]]
+    rows.append(["Ratio", "Value"])
+    ratio_keys = ["current_ratio", "quick_ratio", "debt_ratio", "debt_to_equity", "equity_ratio", "return_on_assets", "return_on_equity", "profit_margin", "asset_turnover"]
+    for key in ratio_keys:
+        rows.append([key.replace("_", " ").title(), report.get(key)])
+    rows.append(["", ""])
+    rows.append(["Balance Sheet Summary", ""])
+    for key, value in report["balances"].items():
+        rows.append([key.replace("_", " ").title(), value])
+    return _csv_response(rows, "financial-ratios.csv")
+
+
+@bp.route("/export/fixed-asset-register.csv", methods=["GET"])
+@login_required
+def export_fixed_asset_register() -> Any:
+    business_id = request.args.get("business_id", type=int)
+    if business_id is None:
+        return jsonify({"error": "business_id is required"}), 400
+    try:
+        report = service.fixed_asset_register(business_id)
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    rows = [["Asset Name", "Cost", "Accumulated Depreciation", "Book Value", "Status", "Acquisition Date"]]
+    for a in report["assets"]:
+        rows.append([a["name"], a["cost"], a["accumulated_depreciation"], a["book_value"], a["status"], a["acquisition_date"]])
+    rows.append(["", "", "", "", "", ""])
+    rows.append(["Totals", report["total_cost"], report["total_accumulated_depreciation"], report["total_book_value"], "", ""])
+    return _csv_response(rows, "fixed-asset-register.csv")
+
+
+@bp.route("/export/cash-flow-forecast.csv", methods=["GET"])
+@login_required
+def export_cash_flow_forecast() -> Any:
+    business_id = request.args.get("business_id", type=int)
+    if business_id is None:
+        return jsonify({"error": "business_id is required"}), 400
+    months = request.args.get("months", 3, type=int)
+    try:
+        report = service.cash_flow_forecast(business_id, months)
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    rows = [["Month", "Expected Inflows", "Expected Outflows", "Net Cash Flow"]]
+    for m in report["monthly_forecast"]:
+        rows.append([m["month"], m["expected_inflows"], m["expected_outflows"], m["net_cash_flow"]])
+    rows.append(["", "", "", ""])
+    rows.append(["Current Cash Balance", report["current_cash_balance"]])
+    rows.append(["Total Expected Inflows", report["total_expected_inflows"]])
+    rows.append(["Total Expected Outflows", report["total_expected_outflows"]])
+    rows.append(["Projected Net Cash Flow", report["projected_net_cash_flow"]])
+    rows.append(["Projected Ending Balance", report["projected_ending_balance"]])
+    return _csv_response(rows, "cash-flow-forecast.csv")
+
+
+@bp.route("/dashboard-summary", methods=["GET"])
+@login_required
+def dashboard_summary() -> Any:
+    business_id = request.args.get("business_id", type=int)
+    if business_id is None:
+        return jsonify({"error": "business_id is required"}), 400
+    try:
+        return jsonify(service.dashboard_summary(business_id))
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400

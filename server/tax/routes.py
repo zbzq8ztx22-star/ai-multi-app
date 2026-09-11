@@ -37,3 +37,51 @@ def update_return(return_id: int) -> Any:
         return jsonify(service.save_return(data, return_id))
     except ValueError as exc:
         return jsonify({"error": str(exc)}), 400
+
+
+@bp.route("/payments", methods=["GET"])
+@login_required
+def tax_payments() -> Any:
+    business_id = request.args.get("business_id", type=int)
+    tax_type = request.args.get("tax_type")
+    if business_id is None:
+        return jsonify({"error": "business_id is required"}), 400
+    try:
+        return jsonify(service.list_tax_payments(business_id, tax_type))
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+
+
+@bp.route("/payments", methods=["POST"])
+@admin_required
+def create_tax_payment() -> Any:
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict):
+        return jsonify({"error": "Request body must be JSON"}), 400
+    try:
+        return jsonify(service.create_tax_payment(data)), 201
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+
+
+@bp.route("/payments/<int:payment_id>", methods=["DELETE"])
+@admin_required
+def delete_tax_payment(payment_id: int) -> Any:
+    try:
+        service.delete_tax_payment(payment_id)
+        return jsonify({"deleted": True})
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+
+
+@bp.route("/payments/summary", methods=["GET"])
+@login_required
+def tax_payment_summary() -> Any:
+    business_id = request.args.get("business_id", type=int)
+    year = request.args.get("year", type=int)
+    if business_id is None:
+        return jsonify({"error": "business_id is required"}), 400
+    try:
+        return jsonify(service.tax_payment_summary(business_id, year))
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
