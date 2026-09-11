@@ -591,6 +591,27 @@ CREATE TABLE IF NOT EXISTS projects (
 );
 
 CREATE INDEX IF NOT EXISTS idx_projects_business ON projects(business_id, status);
+
+CREATE TABLE IF NOT EXISTS bank_transactions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    business_id INTEGER NOT NULL,
+    account_id INTEGER NOT NULL,
+    transaction_date TEXT NOT NULL,
+    description TEXT NOT NULL DEFAULT '',
+    amount REAL NOT NULL,
+    type TEXT NOT NULL CHECK(type IN ('deposit', 'withdrawal', 'fee', 'interest')),
+    reference TEXT NOT NULL DEFAULT '',
+    matched_journal_line_id INTEGER,
+    cleared INTEGER NOT NULL DEFAULT 0 CHECK(cleared IN (0, 1)),
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    FOREIGN KEY (business_id) REFERENCES businesses(id) ON DELETE CASCADE,
+    FOREIGN KEY (account_id) REFERENCES accounts(id),
+    FOREIGN KEY (matched_journal_line_id) REFERENCES journal_lines(id) ON DELETE SET NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_bank_transactions_business ON bank_transactions(business_id, transaction_date);
+CREATE INDEX IF NOT EXISTS idx_bank_transactions_account ON bank_transactions(account_id, cleared);
 """
 
 

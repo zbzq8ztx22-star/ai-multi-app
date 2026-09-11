@@ -967,3 +967,76 @@ def aging_summary() -> Any:
         return jsonify(service.aging_summary(business_id, as_of))
     except ValueError as exc:
         return jsonify({"error": str(exc)}), 400
+
+
+@bp.route("/bank-transactions", methods=["GET"])
+@login_required
+def bank_transactions() -> Any:
+    business_id = request.args.get("business_id", type=int)
+    if business_id is None:
+        return jsonify({"error": "business_id is required"}), 400
+    account_id = request.args.get("account_id", type=int)
+    cleared = request.args.get("cleared")
+    cleared_flag = None
+    if cleared is not None:
+        cleared_flag = cleared.lower() == "true"
+    try:
+        return jsonify(service.list_bank_transactions(business_id, account_id, cleared_flag))
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+
+
+@bp.route("/bank-transactions", methods=["POST"])
+@admin_required
+def create_bank_transaction() -> Any:
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict):
+        return jsonify({"error": "Request body must be JSON"}), 400
+    try:
+        return jsonify(service.create_bank_transaction(data)), 201
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+
+
+@bp.route("/bank-transactions/<int:tx_id>/match", methods=["PUT"])
+@admin_required
+def match_bank_transaction(tx_id: int) -> Any:
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict) or "journal_line_id" not in data:
+        return jsonify({"error": "journal_line_id is required"}), 400
+    try:
+        return jsonify(service.match_bank_transaction(tx_id, int(data["journal_line_id"])))
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+
+
+@bp.route("/bank-transactions/<int:tx_id>/unmatch", methods=["PUT"])
+@admin_required
+def unmatch_bank_transaction(tx_id: int) -> Any:
+    try:
+        return jsonify(service.unmatch_bank_transaction(tx_id))
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+
+
+@bp.route("/bank-transactions/<int:tx_id>", methods=["DELETE"])
+@admin_required
+def delete_bank_transaction(tx_id: int) -> Any:
+    try:
+        service.delete_bank_transaction(tx_id)
+        return jsonify({"deleted": True})
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+
+
+@bp.route("/bank-reconciliation/summary", methods=["GET"])
+@login_required
+def bank_reconciliation_summary() -> Any:
+    business_id = request.args.get("business_id", type=int)
+    account_id = request.args.get("account_id", type=int)
+    if business_id is None or account_id is None:
+        return jsonify({"error": "business_id and account_id are required"}), 400
+    try:
+        return jsonify(service.bank_reconciliation_summary(business_id, account_id))
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
