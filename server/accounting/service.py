@@ -2972,3 +2972,110 @@ def apply_chart_template(business_id: int, template_name: str) -> dict[str, Any]
             "created": created,
             "skipped": skipped,
         }
+
+
+def dashboard_summary(business_id: int) -> dict[str, Any]:
+    """Cross-module dashboard combining key metrics from all accounting subsystems."""
+    with get_db() as conn:
+        _require_business(conn, business_id)
+        # Cash balance (asset accounts starting with code 1)
+        cash_row = conn.execute(
+            """SELECT COALESCE(SUM(CASE WHEN je.status = 'posted' THEN jl.debit - jl.credit ELSE 0 END), 0) AS balance
+               FROM accounts a
+               LEFT JOIN journal_lines jl ON jl.account_id = a.id
+               LEFT JOIN journal_entries je ON je.id = jl.entry_id AND je.business_id = a.business_id
+               WHERE a.business_id = ? AND a.account_type = 'asset' AND a.code LIKE '1%'""",
+            (business_id,),
+        ).fetchone()
+        cash_balance = round(cash_row["balance"], 2)
+        # Open invoices
+        inv_row = conn.execute(
+            "SELECT COUNT(*) AS cnt, COALESCE(SUM(amount - amount_paid), 0) AS outstanding FROM invoices WHERE business_id = ? AND status = 'open'",
+            (business_id,),
+        ).fetchone()
+        open_invoices = inv_row["cnt"]
+        outstanding_receivables = round(inv_row["outstanding"], 2)
+        # Pending expenses
+        pending_row = conn.execute(
+            "SELECT COUNT(*) AS cnt, COALESCE(SUM(amount), 0) AS total FROM expenses WHERE business_id = ? AND approval_status = 'pending'",
+            (business_id,),
+        ).fetchone()
+        pending_expenses = pending_row["cnt"]
+        pending_expense_total = round(pending_row["total"], 2)
+        # Total expenses (this year)
+        import datetime
+        year_start = f"{datetime.date.today().year}-01-01"
+        exp_row = conn.execute(
+            "SELECT COALESCE(SUM(amount), 0) AS total FROM expenses WHERE business_id = ? AND approval_status = 'approved' AND expense_date >= ?",
+            (business_id, year_start),
+        ).fetchone()
+        total_expenses_ytd = round(exp_row["total"], 2)
+        # Revenue (this year from posted entries to revenue accounts)
+        rev_row = conn.execute(
+            """SELECT COALESCE(SUM(CASE WHEN je.status = 'posted' AND je.entry_date >= ? THEN jl.credit - jl.debit ELSE 0 END), 0) AS total
+               FROM accounts a
+               LEFT JOIN journal_lines jl ON jl.account_id = a.id
+               LEFT JOIN journal_entries je ON je.id = jl.entry_id AND je.business_id = a.business_id
+               WHERE a.business_id = ? AND a.account_type = 'revenue'""",
+            (year_start, business_id),
+        ).fetchone()
+        total_revenue_ytd = round(rev_row["total"], 2)
+        net_income_ytd = round(total_revenue_ytd - total_expenses_ytd, 2)
+        # 1099 vendors
+        vendors_1099 = conn.execute(
+            "SELECT COUNT(*) AS cnt FROM accounting_contacts WHERE business_id = ? AND is_1099 = 1",
+            (business_id,),
+        ).fetchone()["cnt"]
+        # Active fixed assets
+        assets_row = conn.execute(
+            "SELECT COUNT(*) AS cnt, COALESCE(SUM(cost), 0) AS total FROM depreciation_assets WHERE business_id = ? AND status = 'active'",
+            (business_id,),
+        ).fetchone()
+        active_fixed_assets = assets_row["cnt"]
+        fixed_asset_total = round(assets_row["total"], 2)
+        # Recent journal entries count (this year)
+        entries_row = conn.execute(
+            "SELECT COUNT(*) AS cnt FROM journal_entries WHERE business_id = ? AND entry_date >= ?",
+            (business_id, year_start),
+        ).fetchone()
+        journal_entries_ytd = entries_row["cnt"]
+        # Open purchase orders
+        po_row = conn.execute(
+            "SELECT COUNT(*) AS cnt, COALESCE(SUM(total_amount), 0) AS total FROM purchase_orders WHERE business_id = ? AND status IN ('draft', 'sent')",
+            (business_id,),
+        ).fetchone()
+        open_purchase_orders = po_row["cnt"]
+        po_total = round(po_row["total"], 2)
+        # Contacts count
+        customers = conn.execute(
+            "SELECT COUNT(*) AS cnt FROM accounting_contacts WHERE business_id = ? AND contact_type IN ('customer', 'both')",
+            (business_id,),
+        ).fetchone()["cnt"]
+        vendors = conn.execute(
+            "SELECT COUNT(*) AS cnt FROM accounting_contacts WHERE business_id = ? AND contact_type IN ('vendor', 'both')",
+            (business_id,),
+        ).fetchone()["cnt"]
+        # Account count
+        accounts = conn.execute(
+            "SELECT COUNT(*) AS cnt FROM accounts WHERE business_id = ?",
+            (business_id,),
+        ).fetchone()["cnt"]
+        return {
+            "cash_balance": cash_balance,
+            "outstanding_receivables": outstanding_receivables,
+            "open_invoices": open_invoices,
+            "pending_expenses": pending_expenses,
+            "pending_expense_total": pending_expense_total,
+            "total_revenue_ytd": total_revenue_ytd,
+            "total_expenses_ytd": total_expenses_ytd,
+            "net_income_ytd": net_income_ytd,
+            "vendors_1099": vendors_1099,
+            "active_fixed_assets": active_fixed_assets,
+            "fixed_asset_total": fixed_asset_total,
+            "journal_entries_ytd": journal_entries_ytd,
+            "open_purchase_orders": open_purchase_orders,
+            "open_po_total": po_total,
+            "customer_count": customers,
+            "vendor_count": vendors,
+            "account_count": accounts,
+        }

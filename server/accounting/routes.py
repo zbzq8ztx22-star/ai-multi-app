@@ -1427,3 +1427,15 @@ def export_cash_flow_forecast() -> Any:
     rows.append(["Projected Net Cash Flow", report["projected_net_cash_flow"]])
     rows.append(["Projected Ending Balance", report["projected_ending_balance"]])
     return _csv_response(rows, "cash-flow-forecast.csv")
+
+
+@bp.route("/dashboard-summary", methods=["GET"])
+@login_required
+def dashboard_summary() -> Any:
+    business_id = request.args.get("business_id", type=int)
+    if business_id is None:
+        return jsonify({"error": "business_id is required"}), 400
+    try:
+        return jsonify(service.dashboard_summary(business_id))
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
