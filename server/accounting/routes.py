@@ -954,3 +954,16 @@ def project_profitability(project_id: int) -> Any:
         return jsonify(service.project_profitability(project_id))
     except ValueError as exc:
         return jsonify({"error": str(exc)}), 400
+
+
+@bp.route("/reports/aging-summary", methods=["GET"])
+@login_required
+def aging_summary() -> Any:
+    business_id = request.args.get("business_id", type=int)
+    if business_id is None:
+        return jsonify({"error": "business_id is required"}), 400
+    as_of = request.args.get("as_of")
+    try:
+        return jsonify(service.aging_summary(business_id, as_of))
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400

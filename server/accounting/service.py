@@ -2060,3 +2060,32 @@ def project_profitability(project_id: int) -> dict[str, Any]:
             "profit_variance": round(actual_profit - budgeted_profit, 2),
             "profit_margin": round((actual_profit / actual_revenue) * 100, 2) if actual_revenue > 0 else None,
         }
+
+
+def aging_summary(business_id: int, as_of: str | None = None) -> dict[str, Any]:
+    """Consolidated aging dashboard combining AR and AP aging summaries."""
+    ar = accounts_receivable_aging(business_id, as_of)
+    ap = accounts_payable_aging(business_id, as_of)
+    ar_total = ar["total_outstanding"]
+    ap_total = ap["total_outstanding"]
+    net_cash_position = round(ar_total - ap_total, 2)
+    # Build bucket comparison
+    bucket_summary = []
+    for bucket in AGING_BUCKETS:
+        bucket_summary.append({
+            "bucket": bucket,
+            "receivable": ar["totals"][bucket],
+            "payable": ap["totals"][bucket],
+            "net": round(ar["totals"][bucket] - ap["totals"][bucket], 2),
+        })
+    return {
+        "as_of": ar["as_of"],
+        "ar_total": ar_total,
+        "ap_total": ap_total,
+        "net_cash_position": net_cash_position,
+        "ar_invoice_count": len(ar["lines"]),
+        "ap_expense_count": len(ap["lines"]),
+        "buckets": bucket_summary,
+        "ar_totals": ar["totals"],
+        "ap_totals": ap["totals"],
+    }
