@@ -1202,3 +1202,42 @@ def cash_flow_forecast() -> Any:
         return jsonify(service.cash_flow_forecast(business_id, months))
     except ValueError as exc:
         return jsonify({"error": str(exc)}), 400
+
+
+@bp.route("/reports/1099", methods=["GET"])
+@login_required
+def report_1099() -> Any:
+    business_id = request.args.get("business_id", type=int)
+    tax_year = request.args.get("tax_year", type=int)
+    if business_id is None or tax_year is None:
+        return jsonify({"error": "business_id and tax_year are required"}), 400
+    try:
+        return jsonify(service.report_1099(business_id, tax_year))
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+
+
+@bp.route("/contacts/<int:contact_id>/1099", methods=["PUT"])
+@admin_required
+def update_contact_1099(contact_id: int) -> Any:
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict):
+        return jsonify({"error": "Request body must be JSON"}), 400
+    is_1099 = data.get("is_1099", False)
+    tax_id = data.get("tax_id", "")
+    try:
+        return jsonify(service.update_contact_1099(contact_id, is_1099, tax_id))
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+
+
+@bp.route("/contacts/1099-vendors", methods=["GET"])
+@login_required
+def list_1099_vendors() -> Any:
+    business_id = request.args.get("business_id", type=int)
+    if business_id is None:
+        return jsonify({"error": "business_id is required"}), 400
+    try:
+        return jsonify(service.list_1099_vendors(business_id))
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400

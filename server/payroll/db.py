@@ -246,6 +246,8 @@ CREATE TABLE IF NOT EXISTS accounting_contacts (
     contact_type TEXT NOT NULL CHECK(contact_type IN ('customer', 'vendor', 'both')),
     email TEXT NOT NULL DEFAULT '',
     phone TEXT NOT NULL DEFAULT '',
+    tax_id TEXT NOT NULL DEFAULT '',
+    is_1099 INTEGER NOT NULL DEFAULT 0 CHECK(is_1099 IN (0, 1)),
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL,
     FOREIGN KEY (business_id) REFERENCES businesses(id) ON DELETE CASCADE

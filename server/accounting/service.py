@@ -2697,3 +2697,64 @@ def cash_flow_forecast(business_id: int, months: int = 3) -> dict[str, Any]:
             "projected_net_cash_flow": round(total_inflows - total_outflows, 2),
             "projected_ending_balance": projected_ending,
         }
+
+
+def list_1099_vendors(business_id: int) -> list[dict[str, Any]]:
+    """List all vendors marked as 1099-eligible."""
+    with get_db() as conn:
+        _require_business(conn, business_id)
+        rows = conn.execute(
+            "SELECT * FROM accounting_contacts WHERE business_id = ? AND is_1099 = 1 AND contact_type IN ('vendor', 'both') ORDER BY name",
+            (business_id,),
+        ).fetchall()
+        return [row_to_dict(row) for row in rows]
+
+
+def update_contact_1099(contact_id: int, is_1099: bool, tax_id: str = "") -> dict[str, Any]:
+    """Update a contact's 1099 eligibility and tax ID."""
+    now = now_utc()
+    with get_db() as conn:
+        row = conn.execute("SELECT * FROM accounting_contacts WHERE id = ?", (contact_id,)).fetchone()
+        if row is None:
+            raise ValueError("Contact not found")
+        conn.execute("UPDATE accounting_contacts SET is_1099 = ?, tax_id = ?, updated_at = ? WHERE id = ?",
+                     (1 if is_1099 else 0, str(tax_id).strip(), now, contact_id))
+        conn.commit()
+        return row_to_dict(conn.execute("SELECT * FROM accounting_contacts WHERE id = ?", (contact_id,)).fetchone())
+
+
+def report_1099(business_id: int, tax_year: int) -> dict[str, Any]:
+    """Generate 1099 report: total payments to 1099 vendors in a tax year."""
+    with get_db() as conn:
+        _require_business(conn, business_id)
+        vendors = conn.execute(
+            "SELECT * FROM accounting_contacts WHERE business_id = ? AND is_1099 = 1 AND contact_type IN ('vendor', 'both') ORDER BY name",
+            (business_id,),
+        ).fetchall()
+        period_start = f"{tax_year}-01-01"
+        period_end = f"{tax_year}-12-31"
+        entries = []
+        total_payments = 0.0
+        for vendor in vendors:
+            vendor = row_to_dict(vendor)
+            # Sum expenses paid to this vendor in the tax year
+            exp_rows = conn.execute(
+                """SELECT COALESCE(SUM(amount), 0) AS total
+                   FROM expenses WHERE business_id = ? AND vendor_id = ? AND expense_date >= ? AND expense_date <= ?""",
+                (business_id, vendor["id"], period_start, period_end),
+            ).fetchone()
+            payments = round(exp_rows["total"], 2)
+            if payments > 0:
+                total_payments = round(total_payments + payments, 2)
+                entries.append({
+                    "vendor_id": vendor["id"],
+                    "vendor_name": vendor["name"],
+                    "tax_id": vendor["tax_id"],
+                    "total_payments": payments,
+                })
+        return {
+            "tax_year": tax_year,
+            "vendor_count": len(entries),
+            "total_payments": total_payments,
+            "entries": entries,
+        }
