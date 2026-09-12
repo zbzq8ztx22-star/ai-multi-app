@@ -29,24 +29,30 @@ export default function Settings() {
     try { await apiDelete(`/api/auth/users/${id}`); await load() } catch (err) { setError(err.message) }
   }
 
-  return <div className="h-full overflow-y-auto p-6 space-y-6">
-    <div className="flex items-center justify-between"><div><h1 className="text-2xl font-bold flex items-center gap-2"><SettingsIcon className="text-primary-400" /> Settings</h1><p className="text-gray-400 mt-1">User management and audit log</p></div><button onClick={load} className="btn-secondary flex items-center gap-2"><RefreshCw size={16} /> Refresh</button></div>
-    {error && <div className="p-4 bg-red-900/20 border border-red-800 rounded-lg text-red-200">{error}</div>}
+  return <div className="h-full overflow-y-auto p-8 space-y-6 bg-gray-50">
+    <div className="flex items-center justify-between">
+      <div>
+        <h1 className="text-2xl font-bold flex items-center gap-2 text-gray-900"><SettingsIcon className="text-primary-600" /> Settings</h1>
+        <p className="text-gray-500 mt-1">User management and audit log</p>
+      </div>
+      <button onClick={load} className="btn-secondary flex items-center gap-2"><RefreshCw size={16} /> Refresh</button>
+    </div>
+    {error && <div className="p-4 bg-red-50 border border-red-200 rounded-lg text-red-700">{error}</div>}
 
     <div className="card space-y-4">
-      <h2 className="text-lg font-semibold flex items-center gap-2"><Users size={20} /> Users</h2>
+      <h2 className="text-lg font-semibold text-gray-900 flex items-center gap-2"><Users size={20} className="text-primary-600" /> Users</h2>
       <form onSubmit={addUser} className="grid grid-cols-4 gap-3">
         <input className="input-field" required placeholder="Username" value={newUser.username} onChange={e => setNewUser({ ...newUser, username: e.target.value })} />
         <input className="input-field" type="password" required placeholder="Password" value={newUser.password} onChange={e => setNewUser({ ...newUser, password: e.target.value })} />
         <select className="input-field" value={newUser.role} onChange={e => setNewUser({ ...newUser, role: e.target.value })}><option value="viewer">Viewer</option><option value="admin">Admin</option></select>
         <button className="btn-primary">Add user</button>
       </form>
-      <div className="space-y-2">{users.map(u => <div key={u.id} className="flex items-center justify-between p-3 bg-gray-800 rounded-lg"><div className="flex items-center gap-3"><span className="font-medium">{u.username}</span><span className={`text-xs px-2 py-1 rounded ${u.role === 'admin' ? 'bg-primary-600 text-white' : 'bg-gray-600'}`}>{u.role}</span></div><div className="flex items-center gap-2"><select className="input-field text-sm w-28" value={u.role} onChange={e => changeRole(u.id, e.target.value)}><option value="viewer">Viewer</option><option value="admin">Admin</option></select><button onClick={() => removeUser(u.id)} className="text-gray-500 hover:text-red-400"><Trash2 size={16} /></button></div></div>)}</div>
+      <div className="space-y-2">{users.map(u => <div key={u.id} className="flex items-center justify-between p-3 bg-gray-50 rounded-lg border border-gray-100"><div className="flex items-center gap-3"><span className="font-medium text-gray-900">{u.username}</span><span className={`badge ${u.role === 'admin' ? 'badge-info' : 'badge-neutral'}`}>{u.role}</span></div><div className="flex items-center gap-2"><select className="input-field text-sm w-28" value={u.role} onChange={e => changeRole(u.id, e.target.value)}><option value="viewer">Viewer</option><option value="admin">Admin</option></select><button onClick={() => removeUser(u.id)} className="text-gray-400 hover:text-red-600"><Trash2 size={16} /></button></div></div>)}</div>
     </div>
 
     <div className="card space-y-3">
-      <h2 className="text-lg font-semibold flex items-center gap-2"><Shield size={20} /> Recent audit log</h2>
-      {auditLog.length === 0 ? <p className="text-gray-400 text-sm">No audit entries yet.</p> : <div className="space-y-1 max-h-96 overflow-y-auto">{auditLog.map(entry => <div key={entry.id} className="flex justify-between text-sm py-1 border-b border-gray-800"><div><span className="text-gray-400">{entry.created_at.slice(0, 19)}</span> <span className="font-medium">{entry.username}</span> <span className="text-primary-400">{entry.action}</span> {entry.entity_type} in {entry.module}</div><div className="text-gray-500 truncate ml-4">{entry.description}</div></div>)}</div>}
+      <h2 className="text-lg font-semibold text-gray-900 flex items-center gap-2"><Shield size={20} className="text-primary-600" /> Recent audit log</h2>
+      {auditLog.length === 0 ? <p className="text-gray-400 text-sm">No audit entries yet.</p> : <div className="space-y-1 max-h-96 overflow-y-auto">{auditLog.map(entry => <div key={entry.id} className="flex justify-between text-sm py-1.5 border-b border-gray-50 last:border-0"><div><span className="text-gray-400">{entry.created_at.slice(0, 19)}</span> <span className="font-medium text-gray-900">{entry.username}</span> <span className="text-primary-600">{entry.action}</span> <span className="text-gray-500">{entry.entity_type} in {entry.module}</span></div><div className="text-gray-400 truncate ml-4">{entry.description}</div></div>)}</div>}
     </div>
   </div>
 }

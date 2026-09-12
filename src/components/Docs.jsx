@@ -50,20 +50,20 @@ export default function Docs() {
   }
 
   return (
-    <div className="flex flex-col h-full">
-      <div className="p-6 border-b border-gray-700">
-        <h2 className="text-2xl font-bold flex items-center gap-2">
-          <FileText size={28} aria-hidden="true" />
+    <div className="flex flex-col h-full bg-gray-50">
+      <div className="p-6 border-b border-gray-200 bg-gray-50">
+        <h2 className="text-2xl font-bold text-gray-900 flex items-center gap-2">
+          <FileText size={28} className="text-primary-600" aria-hidden="true" />
           Document Analysis
         </h2>
-        <p className="text-gray-400 mt-1">Upload documents for AI-powered analysis</p>
+        <p className="text-gray-500 mt-1">Upload documents for AI-powered analysis</p>
       </div>
 
       <div className="flex-1 overflow-y-auto p-6 space-y-6">
         <div className="card space-y-4">
           <div>
-            <label className="block text-sm font-medium mb-2">Upload Document</label>
-            <div className="border-2 border-dashed border-gray-700 rounded-lg p-6 text-center hover:border-primary-500 transition-colors">
+            <label className="block text-sm font-medium text-gray-700 mb-2">Upload Document</label>
+            <div className="border-2 border-dashed border-gray-300 rounded-xl p-6 text-center hover:border-primary-400 hover:bg-primary-50/30 transition-colors">
               <input
                 type="file"
                 onChange={handleFileSelect}
@@ -76,24 +76,26 @@ export default function Docs() {
                 htmlFor="doc-upload"
                 className="cursor-pointer flex flex-col items-center gap-3"
               >
-                <Upload size={32} className="text-gray-400" aria-hidden="true" />
+                <div className="w-14 h-14 bg-primary-50 rounded-full flex items-center justify-center">
+                  <Upload size={28} className="text-primary-500" aria-hidden="true" />
+                </div>
                 <div>
-                  <p className="font-medium">Click to upload</p>
-                  <p className="text-sm text-gray-400">PDF, DOC, DOCX, TXT, MD</p>
+                  <p className="font-medium text-gray-900">Click to upload</p>
+                  <p className="text-sm text-gray-500">PDF, DOC, DOCX, TXT, MD (max 16 MB)</p>
                 </div>
               </label>
             </div>
           </div>
 
           {fileName && (
-            <div className="flex items-center justify-between bg-gray-700 rounded-lg p-3">
+            <div className="flex items-center justify-between bg-gray-50 rounded-lg p-3 border border-gray-100">
               <div className="flex items-center gap-3">
-                <FileText size={20} className="text-primary-400" aria-hidden="true" />
-                <span className="truncate" title={fileName}>{fileName}</span>
+                <FileText size={20} className="text-primary-600" aria-hidden="true" />
+                <span className="truncate text-gray-700" title={fileName}>{fileName}</span>
               </div>
               <button
                 onClick={clearFile}
-                className="p-2 hover:bg-gray-600 rounded-lg transition-colors"
+                className="p-2 hover:bg-gray-200 rounded-lg transition-colors text-gray-400 hover:text-red-600"
                 aria-label="Remove selected document"
                 title="Remove selected document"
               >
@@ -119,21 +121,19 @@ export default function Docs() {
         </div>
 
         {error && (
-          <div className="card bg-red-900/20 border border-red-800">
-            <h3 className="text-lg font-semibold text-red-300 mb-2">Analysis Error</h3>
-            <p className="text-red-200 whitespace-pre-wrap">{error}</p>
+          <div className="card bg-red-50 border-red-200">
+            <h3 className="text-lg font-semibold text-red-700 mb-2">Analysis Error</h3>
+            <p className="text-red-600 whitespace-pre-wrap">{error}</p>
           </div>
         )}
 
         {analysis && (
           <div className="card">
-            <h3 className="text-lg font-semibold mb-3 flex items-center gap-2">
-              <Sparkles size={20} className="text-primary-400" aria-hidden="true" />
+            <h3 className="text-lg font-semibold text-gray-900 mb-3 flex items-center gap-2">
+              <Sparkles size={20} className="text-primary-600" aria-hidden="true" />
               Analysis Results
             </h3>
-            <div className="prose prose-invert max-w-none">
-              <p className="text-gray-300 whitespace-pre-wrap">{analysis}</p>
-            </div>
+            <p className="text-gray-700 whitespace-pre-wrap leading-relaxed">{analysis}</p>
           </div>
         )}
       </div>

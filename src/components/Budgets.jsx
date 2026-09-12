@@ -38,12 +38,12 @@ export default function Budgets({ businessId, accounts }) {
   const reportAccounts = accounts.filter(a => ['revenue', 'expense'].includes(a.account_type))
 
   return <div className="card space-y-5">
-    <h2 className="text-lg font-semibold flex items-center gap-2"><Target size={20} /> Budgets</h2>
+    <h2 className="text-lg font-semibold text-gray-900 flex items-center gap-2"><Target size={20} className="text-primary-600" /> Budgets</h2>
     <div className="flex items-center gap-3">
-      <label className="text-sm text-gray-400">Fiscal year</label>
+      <label className="text-sm text-gray-500">Fiscal year</label>
       <input className="input-field w-32" type="number" min="2000" max="2100" value={fiscalYear} onChange={e => setFiscalYear(e.target.value)} />
     </div>
-    {error && <p className="text-red-400">{error}</p>}
+    {error && <p className="text-red-600 text-sm">{error}</p>}
 
     <form onSubmit={submit} className="grid grid-cols-3 gap-3">
       <select className="input-field" required value={form.account_id} onChange={e => setForm({ ...form, account_id: e.target.value })}>
@@ -56,18 +56,18 @@ export default function Budgets({ businessId, accounts }) {
 
     {report && report.lines.length > 0 && <div className="overflow-x-auto">
       <table className="w-full text-sm">
-        <thead><tr className="text-left text-gray-400 border-b border-gray-700"><th className="py-2">Account</th><th>Type</th><th className="text-right">Budgeted</th><th className="text-right">Actual</th><th className="text-right">Variance</th><th></th></tr></thead>
+        <thead><tr className="text-left text-gray-500 border-b border-gray-200 font-medium"><th className="py-2">Account</th><th>Type</th><th className="text-right">Budgeted</th><th className="text-right">Actual</th><th className="text-right">Variance</th><th></th></tr></thead>
         <tbody>
-          {report.lines.map(line => <tr key={line.account_id} className="border-b border-gray-800">
-            <td className="py-2">{line.account_code} · {line.account_name}</td>
-            <td className="capitalize">{line.account_type}</td>
-            <td className="text-right">{money(line.budgeted)}</td>
-            <td className="text-right">{money(line.actual)}</td>
-            <td className={`text-right ${line.variance < 0 ? 'text-red-400' : 'text-green-400'}`}>{money(line.variance)}</td>
-            <td className="text-right">{budgets.find(b => b.account_id === line.account_id) && <button onClick={() => remove(budgets.find(b => b.account_id === line.account_id).id)} className="text-gray-500 hover:text-red-400"><Trash2 size={16} /></button>}</td>
+          {report.lines.map(line => <tr key={line.account_id} className="border-b border-gray-50 hover:bg-gray-50/50">
+            <td className="py-2 text-gray-900">{line.account_code} · {line.account_name}</td>
+            <td className="capitalize text-gray-600">{line.account_type}</td>
+            <td className="text-right text-gray-600">{money(line.budgeted)}</td>
+            <td className="text-right text-gray-600">{money(line.actual)}</td>
+            <td className={`text-right font-medium ${line.variance < 0 ? 'text-red-600' : 'text-emerald-600'}`}>{money(line.variance)}</td>
+            <td className="text-right">{budgets.find(b => b.account_id === line.account_id) && <button onClick={() => remove(budgets.find(b => b.account_id === line.account_id).id)} className="text-gray-400 hover:text-red-600"><Trash2 size={16} /></button>}</td>
           </tr>)}
         </tbody>
-        <tfoot><tr className="font-bold"><td className="pt-3" colSpan="2">Totals</td><td className="pt-3 text-right">{money(report.total_budgeted)}</td><td className="pt-3 text-right">{money(report.total_actual)}</td><td className="pt-3 text-right">{money(report.total_variance)}</td><td></td></tr></tfoot>
+        <tfoot><tr className="font-bold text-gray-900"><td className="pt-3" colSpan="2">Totals</td><td className="pt-3 text-right">{money(report.total_budgeted)}</td><td className="pt-3 text-right">{money(report.total_actual)}</td><td className="pt-3 text-right">{money(report.total_variance)}</td><td></td></tr></tfoot>
       </table>
     </div>}
     {report && report.lines.length === 0 && <p className="text-gray-400 text-sm">No budgets set for {fiscalYear}. Add a budget for a revenue or expense account above.</p>}
