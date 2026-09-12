@@ -1,9 +1,8 @@
 import { useEffect, useState } from 'react'
-import { MessageSquare, Image, Calculator, FileText, Wallet, Menu, X, LogOut, Loader2, BookOpen, LayoutDashboard, Settings as SettingsIcon, Code } from 'lucide-react'
+import { MessageSquare, Image, Calculator, FileText, Wallet, Menu, X, LogOut, Loader2, BookOpen, LayoutDashboard, Settings as SettingsIcon } from 'lucide-react'
 import { apiGet, apiPost } from './api'
 import Accounting from './components/Accounting'
 import Chat from './components/Chat'
-import CodeGen from './components/CodeGen'
 import Dashboard from './components/Dashboard'
 import Docs from './components/Docs'
 import Login from './components/Login'
@@ -37,7 +36,6 @@ function App() {
     { id: 'dashboard', name: 'Dashboard', icon: LayoutDashboard },
     { id: 'chat', name: 'Chat', icon: MessageSquare },
     { id: 'vision', name: 'Vision', icon: Image },
-    { id: 'code', name: 'Code', icon: Code },
     { id: 'tax', name: 'Tax', icon: Calculator },
     { id: 'accounting', name: 'Accounting', icon: BookOpen },
     { id: 'docs', name: 'Documents', icon: FileText },
@@ -47,8 +45,8 @@ function App() {
 
   if (authLoading) {
     return (
-      <div className="h-screen flex items-center justify-center bg-gray-900">
-        <Loader2 className="animate-spin text-primary-400" size={32} aria-label="Loading" />
+      <div className="h-screen flex items-center justify-center bg-gray-50">
+        <Loader2 className="animate-spin text-primary-500" size={32} aria-label="Loading" />
       </div>
     )
   }
@@ -58,56 +56,75 @@ function App() {
   }
 
   return (
-    <div className="flex h-screen bg-gray-900">
+    <div className="flex h-screen bg-gray-50">
       {/* Sidebar */}
-      <aside className={`${sidebarOpen ? 'w-64' : 'w-16'} bg-gray-800 border-r border-gray-700 transition-all duration-300`}>
-        <div className="flex items-center justify-between p-4 border-b border-gray-700">
-          {sidebarOpen && <h1 className="text-xl font-bold text-primary-400">AI Multi-App</h1>}
+      <aside className={`${sidebarOpen ? 'w-64' : 'w-16'} bg-gray-50 border-r border-gray-200 transition-all duration-300 flex flex-col`}>
+        <div className="flex items-center justify-between p-4 border-b border-gray-200">
+          {sidebarOpen && (
+            <div className="flex items-center gap-2">
+              <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-primary-500 to-primary-700 flex items-center justify-center">
+                <LayoutDashboard size={18} className="text-white" aria-hidden="true" />
+              </div>
+              <h1 className="text-lg font-bold text-gray-900">AI Multi-App</h1>
+            </div>
+          )}
           <button
             onClick={() => setSidebarOpen(!sidebarOpen)}
-            className="p-2 hover:bg-gray-700 rounded-lg transition-colors"
+            className="p-2 hover:bg-gray-100 rounded-lg transition-colors text-gray-500"
             aria-label={sidebarOpen ? 'Collapse sidebar' : 'Expand sidebar'}
             title={sidebarOpen ? 'Collapse sidebar' : 'Expand sidebar'}
           >
             {sidebarOpen ? <X size={20} aria-hidden="true" /> : <Menu size={20} aria-hidden="true" />}
           </button>
         </div>
-        
-        <nav className="p-4 space-y-2" role="tablist" aria-label="Application sections">
+
+        <nav className="flex-1 p-3 space-y-1 overflow-y-auto" role="tablist" aria-label="Application sections">
           {tabs.map((tab) => {
             const Icon = tab.icon
+            const active = activeTab === tab.id
             return (
               <button
                 key={tab.id}
                 onClick={() => setActiveTab(tab.id)}
-                className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-colors ${
-                  activeTab === tab.id
-                    ? 'bg-primary-600 text-white'
-                    : 'hover:bg-gray-700 text-gray-300'
+                className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg transition-all font-medium ${
+                  active
+                    ? 'bg-primary-50 text-primary-700'
+                    : 'hover:bg-gray-50 text-gray-600 hover:text-gray-900'
                 }`}
                 id={`${tab.id}-tab`}
                 role="tab"
                 aria-label={tab.name}
-                aria-selected={activeTab === tab.id}
+                aria-selected={active}
                 aria-controls={`${tab.id}-panel`}
                 title={tab.name}
               >
-                <Icon size={20} aria-hidden="true" />
-                {sidebarOpen && <span>{tab.name}</span>}
+                <Icon size={20} aria-hidden="true" className={active ? 'text-primary-600' : 'text-gray-400'} />
+                {sidebarOpen && <span className="text-sm">{tab.name}</span>}
               </button>
             )
           })}
         </nav>
 
-        <div className="mt-auto p-4 border-t border-gray-700">
+        <div className="p-3 border-t border-gray-100">
+          {sidebarOpen && user && (
+            <div className="flex items-center gap-3 px-3 py-2 mb-1">
+              <div className="w-8 h-8 rounded-full bg-gradient-to-br from-primary-400 to-primary-600 flex items-center justify-center text-white text-sm font-semibold">
+                {user.username?.[0]?.toUpperCase() || 'U'}
+              </div>
+              <div className="flex-1 min-w-0">
+                <p className="text-sm font-medium text-gray-900 truncate">{user.username}</p>
+                <p className="text-xs text-gray-400 capitalize">{user.role}</p>
+              </div>
+            </div>
+          )}
           <button
             onClick={handleLogout}
-            className="w-full flex items-center gap-3 px-4 py-3 rounded-lg hover:bg-gray-700 text-gray-300 transition-colors"
+            className="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg hover:bg-gray-50 text-gray-500 hover:text-gray-900 transition-colors"
             aria-label="Sign out"
             title="Sign out"
           >
             <LogOut size={20} aria-hidden="true" />
-            {sidebarOpen && <span>Sign out</span>}
+            {sidebarOpen && <span className="text-sm font-medium">Sign out</span>}
           </button>
         </div>
       </aside>
@@ -122,7 +139,6 @@ function App() {
         {activeTab === 'dashboard' && <Dashboard onNavigate={setActiveTab} />}
         {activeTab === 'chat' && <Chat />}
         {activeTab === 'vision' && <Vision />}
-        {activeTab === 'code' && <CodeGen />}
         {activeTab === 'tax' && <Tax />}
         {activeTab === 'accounting' && <Accounting />}
         {activeTab === 'docs' && <Docs />}

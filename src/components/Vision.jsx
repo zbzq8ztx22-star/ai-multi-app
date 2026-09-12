@@ -68,21 +68,21 @@ export default function Vision() {
   }
 
   return (
-    <div className="flex flex-col h-full">
-      <div className="p-6 border-b border-gray-700">
-        <h2 className="text-2xl font-bold flex items-center gap-2">
-          <ImageIcon size={28} aria-hidden="true" />
+    <div className="flex flex-col h-full bg-gray-50">
+      <div className="p-6 border-b border-gray-200 bg-gray-50">
+        <h2 className="text-2xl font-bold text-gray-900 flex items-center gap-2">
+          <ImageIcon size={28} className="text-primary-600" aria-hidden="true" />
           Image Analysis
         </h2>
-        <p className="text-gray-400 mt-1">Upload an image and I'll analyze it for you</p>
+        <p className="text-gray-500 mt-1">Upload an image and I'll analyze it for you</p>
       </div>
 
       <div className="flex-1 overflow-y-auto p-6">
         <div
           onDrop={handleDrop}
           onDragOver={(e) => e.preventDefault()}
-          className={`border-2 border-dashed rounded-xl p-8 text-center transition-colors ${
-            preview ? 'border-gray-600' : 'border-gray-700 hover:border-primary-500'
+          className={`border-2 border-dashed rounded-xl p-8 text-center transition-colors bg-gray-50 ${
+            preview ? 'border-primary-300' : 'border-gray-300 hover:border-primary-400 hover:bg-primary-50/30'
           }`}
           role="region"
           aria-label="Image upload area"
@@ -92,7 +92,7 @@ export default function Vision() {
               <img
                 src={preview}
                 alt="Selected preview"
-                className="max-h-96 mx-auto rounded-lg"
+                className="max-h-96 mx-auto rounded-xl shadow-md"
               />
               <div className="flex gap-3 justify-center">
                 <button
@@ -121,12 +121,12 @@ export default function Vision() {
             </div>
           ) : (
             <div className="space-y-4">
-              <div className="w-16 h-16 mx-auto bg-gray-700 rounded-full flex items-center justify-center" aria-hidden="true">
-                <Upload size={32} className="text-gray-400" />
+              <div className="w-16 h-16 mx-auto bg-primary-50 rounded-full flex items-center justify-center" aria-hidden="true">
+                <Upload size={32} className="text-primary-500" />
               </div>
               <div>
-                <p className="text-lg font-medium">Drop an image here</p>
-                <p className="text-gray-400">or click to browse</p>
+                <p className="text-lg font-medium text-gray-900">Drop an image here</p>
+                <p className="text-gray-500">or click to browse</p>
               </div>
               <input
                 ref={fileInputRef}
@@ -150,11 +150,11 @@ export default function Vision() {
 
         {analysis && (
           <div className="mt-6 card">
-            <h3 className="text-lg font-semibold mb-3 flex items-center gap-2">
-              <Sparkles size={20} className="text-primary-400" aria-hidden="true" />
+            <h3 className="text-lg font-semibold text-gray-900 mb-3 flex items-center gap-2">
+              <Sparkles size={20} className="text-primary-600" aria-hidden="true" />
               Analysis Results
             </h3>
-            <p className="text-gray-300 whitespace-pre-wrap">{analysis}</p>
+            <p className="text-gray-700 whitespace-pre-wrap leading-relaxed">{analysis}</p>
           </div>
         )}
       </div>

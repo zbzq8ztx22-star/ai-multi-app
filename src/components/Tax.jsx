@@ -60,13 +60,19 @@ export default function Tax() {
   }
 
   return (
-    <div className="h-full overflow-y-auto p-6 space-y-6">
-      <div className="flex items-center justify-between"><div><h1 className="text-2xl font-bold flex items-center gap-2"><Calculator className="text-primary-400" /> Tax</h1><p className="text-gray-400 mt-1">Personal and corporate tax workspace</p></div><button onClick={refresh} className="btn-secondary flex items-center gap-2"><RefreshCw size={16} /> Refresh</button></div>
-      {error && <div className="p-4 bg-red-900/20 border border-red-800 rounded-lg text-red-200">{error}</div>}
+    <div className="h-full overflow-y-auto p-8 space-y-6 bg-gray-50">
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-2xl font-bold flex items-center gap-2 text-gray-900"><Calculator className="text-primary-600" /> Tax</h1>
+          <p className="text-gray-500 mt-1">Personal and corporate tax workspace</p>
+        </div>
+        <button onClick={refresh} className="btn-secondary flex items-center gap-2"><RefreshCw size={16} className={loading ? 'animate-spin' : ''} /> Refresh</button>
+      </div>
+      {error && <div className="p-4 bg-red-50 border border-red-200 rounded-lg text-red-700">{error}</div>}
 
       <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
         <form onSubmit={submitPerson} className="card space-y-4">
-          <h2 className="text-lg font-semibold flex items-center gap-2"><UserRound size={20} /> New taxpayer</h2>
+          <h2 className="text-lg font-semibold text-gray-900 flex items-center gap-2"><UserRound size={20} className="text-primary-600" /> New taxpayer</h2>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
             <input className="input-field" placeholder="Legal name" required value={personForm.legal_name} onChange={e => setPersonForm({ ...personForm, legal_name: e.target.value })} />
             <select className="input-field" value={personForm.employee_id} onChange={e => setPersonForm({ ...personForm, employee_id: e.target.value })}><option value="">No payroll link</option>{employees.map(e => <option key={e.id} value={e.id}>{e.name}</option>)}</select>
@@ -76,11 +82,11 @@ export default function Tax() {
             <input className="input-field" type="email" placeholder="Email" value={personForm.email} onChange={e => setPersonForm({ ...personForm, email: e.target.value })} />
           </div><button className="btn-primary flex items-center gap-2" disabled={loading}><Plus size={16} /> Add taxpayer</button>
         </form>
-        <div className="card"><h2 className="text-lg font-semibold mb-4">Taxpayers</h2>{taxpayers.length === 0 ? <p className="text-gray-400">No taxpayers yet.</p> : <div className="space-y-3">{taxpayers.map(p => <div key={p.id} className="p-3 rounded-lg bg-gray-800"><p className="font-medium">{p.legal_name}</p><p className="text-sm text-gray-400">{p.filing_status.replaceAll('_', ' ')} · {p.residence_state || 'No state'} · {p.employee_id ? 'Payroll linked' : 'Independent'}</p></div>)}</div>}</div>
+        <div className="card"><h2 className="text-lg font-semibold text-gray-900 mb-4">Taxpayers</h2>{taxpayers.length === 0 ? <p className="text-gray-400">No taxpayers yet.</p> : <div className="space-y-3">{taxpayers.map(p => <div key={p.id} className="p-3 rounded-lg bg-gray-50 border border-gray-100"><p className="font-medium text-gray-900">{p.legal_name}</p><p className="text-sm text-gray-500">{p.filing_status.replaceAll('_', ' ')} · {p.residence_state || 'No state'} · {p.employee_id ? 'Payroll linked' : 'Independent'}</p></div>)}</div>}</div>
       </div>
 
       <form onSubmit={submitReturn} className="card space-y-4">
-        <div><h2 className="text-lg font-semibold">Personal return estimate</h2><p className="text-sm text-gray-400">2025 federal estimate using IRS brackets. State liability must be entered from the applicable state calculation.</p></div>
+        <div><h2 className="text-lg font-semibold text-gray-900">Personal return estimate</h2><p className="text-sm text-gray-500">2025 federal estimate using IRS brackets. State liability must be entered from the applicable state calculation.</p></div>
         <div className="grid grid-cols-1 md:grid-cols-3 xl:grid-cols-4 gap-3">
           <select className="input-field" required value={returnForm.taxpayer_id} onChange={e => setReturnForm({ ...returnForm, taxpayer_id: e.target.value })}><option value="">Select taxpayer</option>{taxpayers.map(p => <option key={p.id} value={p.id}>{p.legal_name}</option>)}</select>
           <input className="input-field" value={returnForm.tax_year} disabled />
@@ -89,9 +95,9 @@ export default function Tax() {
         <div className="flex gap-2"><button className="btn-primary" disabled={loading}>{selectedReturnId ? 'Recalculate return' : 'Calculate return'}</button>{selectedReturnId && <button type="button" className="btn-secondary" onClick={() => { setSelectedReturnId(null); setReturnForm(EMPTY_RETURN) }}>Cancel</button>}</div>
       </form>
 
-      <div className="card"><h2 className="text-lg font-semibold mb-4">Return results</h2>{returns.length === 0 ? <p className="text-gray-400">No returns calculated.</p> : <div className="overflow-x-auto"><table className="w-full text-sm"><thead><tr className="text-left text-gray-400 border-b border-gray-700"><th className="py-2">Taxpayer</th><th>Year</th><th>AGI</th><th>Taxable</th><th>Federal tax</th><th>Refund / due</th><th>State refund / due</th><th></th></tr></thead><tbody>{returns.map(r => <tr key={r.id} className="border-b border-gray-800"><td className="py-3">{r.taxpayer_name}</td><td>{r.tax_year}</td><td>{money(r.adjusted_gross_income)}</td><td>{money(r.taxable_income)}</td><td>{money(r.federal_tax)}</td><td className={r.federal_refund_or_due < 0 ? 'text-red-400' : 'text-green-400'}>{money(r.federal_refund_or_due)}</td><td className={r.state_refund_or_due < 0 ? 'text-red-400' : 'text-green-400'}>{money(r.state_refund_or_due)}</td><td><button className="text-primary-400" onClick={() => editReturn(r)}>Edit</button></td></tr>)}</tbody></table></div>}</div>
+      <div className="card"><h2 className="text-lg font-semibold text-gray-900 mb-4">Return results</h2>{returns.length === 0 ? <p className="text-gray-400">No returns calculated.</p> : <div className="overflow-x-auto"><table className="w-full text-sm"><thead><tr className="text-left text-gray-500 border-b border-gray-200"><th className="py-2 font-medium">Taxpayer</th><th className="font-medium">Year</th><th className="font-medium">AGI</th><th className="font-medium">Taxable</th><th className="font-medium">Federal tax</th><th className="font-medium">Refund / due</th><th className="font-medium">State refund / due</th><th></th></tr></thead><tbody>{returns.map(r => <tr key={r.id} className="border-b border-gray-50 hover:bg-gray-50/50"><td className="py-3 text-gray-900">{r.taxpayer_name}</td><td className="text-gray-600">{r.tax_year}</td><td className="text-gray-600">{money(r.adjusted_gross_income)}</td><td className="text-gray-600">{money(r.taxable_income)}</td><td className="text-gray-600">{money(r.federal_tax)}</td><td className={r.federal_refund_or_due < 0 ? 'text-red-600 font-medium' : 'text-emerald-600 font-medium'}>{money(r.federal_refund_or_due)}</td><td className={r.state_refund_or_due < 0 ? 'text-red-600 font-medium' : 'text-emerald-600 font-medium'}>{money(r.state_refund_or_due)}</td><td><button className="text-primary-600 hover:text-primary-700 font-medium" onClick={() => editReturn(r)}>Edit</button></td></tr>)}</tbody></table></div>}</div>
 
-      <div className="card"><h2 className="text-lg font-semibold flex items-center gap-2 mb-3"><Building2 size={20} /> Corporate tax</h2><p className="text-gray-400 mb-4">Corporate returns will use financial results from Accounting in the next phase.</p>{businesses.length === 0 ? <p className="text-sm text-gray-500">Create a business in Accounting to begin.</p> : businesses.map(b => <div key={b.id} className="py-2 border-b border-gray-700 last:border-0">{b.legal_name} · {b.entity_type.replaceAll('_', ' ')}</div>)}</div>
+      <div className="card"><h2 className="text-lg font-semibold text-gray-900 flex items-center gap-2 mb-3"><Building2 size={20} className="text-primary-600" /> Corporate tax</h2><p className="text-gray-500 mb-4">Corporate returns will use financial results from Accounting in the next phase.</p>{businesses.length === 0 ? <p className="text-sm text-gray-400">Create a business in Accounting to begin.</p> : businesses.map(b => <div key={b.id} className="py-2 border-b border-gray-100 last:border-0 text-gray-700">{b.legal_name} · {b.entity_type.replaceAll('_', ' ')}</div>)}</div>
     </div>
   )
 }

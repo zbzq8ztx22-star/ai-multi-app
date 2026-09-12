@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from 'react'
-import { Send, Loader2, User, Bot } from 'lucide-react'
+import { Send, Loader2, User, Bot, MessageSquare } from 'lucide-react'
 import { apiPost } from '../api'
 
 const SESSION_ID_KEY = 'ai_multi_app_chat_session_id'
@@ -74,10 +74,12 @@ export default function Chat() {
   }
 
   return (
-    <div className="flex flex-col h-full">
-      <div className="p-6 border-b border-gray-700">
-        <h2 className="text-2xl font-bold">AI Chat</h2>
-        <p className="text-gray-400 mt-1">Ask anything - I'm here to help!</p>
+    <div className="flex flex-col h-full bg-gray-50">
+      <div className="p-6 border-b border-gray-200 bg-gray-50">
+        <h2 className="text-2xl font-bold text-gray-900 flex items-center gap-2">
+          <MessageSquare className="text-primary-600" /> AI Chat
+        </h2>
+        <p className="text-gray-500 mt-1">Ask anything - I'm here to help!</p>
       </div>
 
       <div className="flex-1 overflow-y-auto p-6 space-y-4" role="log" aria-live="polite" aria-label="Chat messages">
@@ -87,21 +89,21 @@ export default function Chat() {
             className={`flex gap-3 ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}
           >
             {msg.role === 'assistant' && (
-              <div className="w-8 h-8 rounded-full bg-primary-600 flex items-center justify-center flex-shrink-0" aria-hidden="true">
+              <div className="w-9 h-9 rounded-full bg-gradient-to-br from-primary-500 to-primary-700 flex items-center justify-center flex-shrink-0 text-white shadow-sm" aria-hidden="true">
                 <Bot size={18} />
               </div>
             )}
             <div
-              className={`max-w-2xl rounded-2xl px-4 py-3 ${
+              className={`max-w-2xl rounded-2xl px-4 py-3 shadow-sm ${
                 msg.role === 'user'
-                  ? 'bg-primary-600 text-white'
-                  : 'bg-gray-800 text-gray-100'
+                  ? 'bg-primary-600 text-white rounded-br-md'
+                  : 'bg-gray-50 text-gray-700 border border-gray-200 rounded-bl-md'
               }`}
             >
-              <p className="whitespace-pre-wrap">{msg.content}</p>
+              <p className="whitespace-pre-wrap leading-relaxed">{msg.content}</p>
             </div>
             {msg.role === 'user' && (
-              <div className="w-8 h-8 rounded-full bg-gray-600 flex items-center justify-center flex-shrink-0" aria-hidden="true">
+              <div className="w-9 h-9 rounded-full bg-gray-200 flex items-center justify-center flex-shrink-0 text-gray-500" aria-hidden="true">
                 <User size={18} />
               </div>
             )}
@@ -109,18 +111,18 @@ export default function Chat() {
         ))}
         {loading && (
           <div className="flex gap-3">
-            <div className="w-8 h-8 rounded-full bg-primary-600 flex items-center justify-center flex-shrink-0" aria-hidden="true">
+            <div className="w-9 h-9 rounded-full bg-gradient-to-br from-primary-500 to-primary-700 flex items-center justify-center flex-shrink-0 text-white shadow-sm" aria-hidden="true">
               <Bot size={18} />
             </div>
-            <div className="bg-gray-800 rounded-2xl px-4 py-3">
-              <Loader2 className="animate-spin" size={20} aria-label="Assistant is typing" />
+            <div className="bg-gray-50 rounded-2xl rounded-bl-md border border-gray-200 px-4 py-3 shadow-sm">
+              <Loader2 className="animate-spin text-gray-400" size={20} aria-label="Assistant is typing" />
             </div>
           </div>
         )}
         <div ref={messagesEndRef} />
       </div>
 
-      <form onSubmit={handleSubmit} className="p-6 border-t border-gray-700">
+      <form onSubmit={handleSubmit} className="p-6 border-t border-gray-200 bg-gray-50">
         <div className="flex gap-3">
           <input
             type="text"
