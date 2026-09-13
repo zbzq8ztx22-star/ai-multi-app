@@ -230,9 +230,6 @@ def init_auth(app: Any) -> None:
             "or add it to your Flask app config."
         )
     app.secret_key = secret_key
-    # Assign directly: Flask's default_config already defines these keys, so
-    # setdefault would silently keep the insecure defaults (SameSite=None,
-    # Secure=False).
     app.config["SESSION_COOKIE_HTTPONLY"] = True
     app.config["SESSION_COOKIE_SAMESITE"] = os.environ.get("SESSION_COOKIE_SAMESITE", "Lax")
     app.config["SESSION_COOKIE_SECURE"] = _env_flag("SESSION_COOKIE_SECURE", True)
