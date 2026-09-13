@@ -799,3 +799,17 @@ def test_viewer_cannot_mutate_payroll(app):
 
     resp = client.post("/api/payroll/assistant", json={"message": "list employees"})
     assert resp.status_code != 403
+
+
+def test_cors_preflight_options_is_public(app):
+    anon = app.test_client()
+    resp = anon.options(
+        "/api/payroll/employees/1",
+        headers={
+            "Origin": "http://localhost:3000",
+            "Access-Control-Request-Method": "PUT",
+        },
+    )
+    assert resp.status_code < 400
+    allow_methods = resp.headers.get("Access-Control-Allow-Methods", "")
+    assert "PUT" in allow_methods

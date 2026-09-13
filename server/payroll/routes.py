@@ -14,6 +14,9 @@ bp = Blueprint("payroll", __name__, url_prefix="/api/payroll")
 @bp.before_request
 def _require_login() -> Any:
     """All payroll endpoints require an authenticated session."""
+    # CORS preflight requests carry no cookies; let flask-cors answer them.
+    if request.method == "OPTIONS":
+        return None
     from auth import login_required
 
     result = login_required(lambda: None)()
