@@ -453,3 +453,34 @@ def test_ai_routes_require_login(app):
         resp = anon.post(path, json={})
         assert resp.status_code == 401, path
     assert anon.get("/api/health").status_code != 401
+
+
+# --------------------------------------------------------------------------- #
+# Session cookie flags
+# --------------------------------------------------------------------------- #
+
+
+def test_session_cookie_flags(app, monkeypatch, tmp_path):
+    from app import create_app
+
+    # Secure enabled via env: the login response cookie must carry all flags.
+    monkeypatch.setenv("SESSION_COOKIE_SECURE", "1")
+    secure_app = create_app(test_config={"PAYROLL_DATABASE": str(tmp_path / "secure.db")})
+    client = secure_app.test_client()
+    client.post("/api/auth/register", json={"username": "u1", "password": "pw"})
+    resp = client.post("/api/auth/login", json={"username": "u1", "password": "pw"})
+    set_cookie = resp.headers.get("Set-Cookie", "")
+    assert "HttpOnly" in set_cookie
+    assert "SameSite=Lax" in set_cookie
+    assert "Secure" in set_cookie
+
+    # Secure disabled via env: the cookie must not be marked Secure.
+    monkeypatch.setenv("SESSION_COOKIE_SECURE", "0")
+    insecure_app = create_app(test_config={"PAYROLL_DATABASE": str(tmp_path / "insecure.db")})
+    client = insecure_app.test_client()
+    client.post("/api/auth/register", json={"username": "u2", "password": "pw"})
+    resp = client.post("/api/auth/login", json={"username": "u2", "password": "pw"})
+    set_cookie = resp.headers.get("Set-Cookie", "")
+    assert "HttpOnly" in set_cookie
+    assert "SameSite=Lax" in set_cookie
+    assert "Secure" not in set_cookie

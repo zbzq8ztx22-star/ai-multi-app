@@ -230,13 +230,9 @@ def init_auth(app: Any) -> None:
             "or add it to your Flask app config."
         )
     app.secret_key = secret_key
-    app.config.setdefault("SESSION_COOKIE_HTTPONLY", True)
-    app.config.setdefault(
-        "SESSION_COOKIE_SAMESITE", os.environ.get("SESSION_COOKIE_SAMESITE", "Lax")
-    )
-    app.config.setdefault(
-        "SESSION_COOKIE_SECURE", _env_flag("SESSION_COOKIE_SECURE", True)
-    )
+    app.config["SESSION_COOKIE_HTTPONLY"] = True
+    app.config["SESSION_COOKIE_SAMESITE"] = os.environ.get("SESSION_COOKIE_SAMESITE", "Lax")
+    app.config["SESSION_COOKIE_SECURE"] = _env_flag("SESSION_COOKIE_SECURE", True)
     app.register_blueprint(bp)
 
     default_password = os.environ.get("DEFAULT_ADMIN_PASSWORD")
