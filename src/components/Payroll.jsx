@@ -294,7 +294,7 @@ export default function Payroll() {
   const renderEmployees = () => (
     <div className="space-y-6">
       <form onSubmit={handleCreateEmployee} className="card space-y-4">
-        <h3 className="text-lg font-semibold">Add Employee</h3>
+        <h3 className="text-lg font-semibold text-gray-900">Add Employee</h3>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <div>
             <label className="block text-sm font-medium mb-1">Name</label>
@@ -432,7 +432,7 @@ export default function Payroll() {
               type="checkbox"
               checked={employeeForm.multiple_jobs}
               onChange={e => setEmployeeForm({ ...employeeForm, multiple_jobs: e.target.checked })}
-              className="h-4 w-4 rounded border-gray-600 bg-gray-700 text-primary-600 focus:ring-primary-500"
+              className="h-4 w-4 rounded border-gray-300 text-primary-600 focus:ring-primary-500"
             />
             <label htmlFor="multiple-jobs" className="text-sm font-medium">Multiple jobs (W-4 Step 2c)</label>
           </div>
@@ -443,14 +443,14 @@ export default function Payroll() {
       </form>
 
       <div className="card">
-        <h3 className="text-lg font-semibold mb-4">Employees</h3>
+        <h3 className="text-lg font-semibold text-gray-900 mb-4">Employees</h3>
         {employees.length === 0 ? (
-          <p className="text-gray-400">No employees yet.</p>
+          <p className="text-gray-500">No employees yet.</p>
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full text-left">
               <thead>
-                <tr className="text-gray-400 border-b border-gray-700">
+                <tr className="text-gray-500 border-b border-gray-200 font-medium">
                   <th className="pb-2">Name</th>
                   <th className="pb-2">Type</th>
                   <th className="pb-2">Rate</th>
@@ -461,7 +461,7 @@ export default function Payroll() {
               </thead>
               <tbody>
                 {employees.map(emp => (
-                  <tr key={emp.id} className="border-b border-gray-700 last:border-0">
+                  <tr key={emp.id} className="border-b border-gray-50 last:border-0 hover:bg-gray-50/50">
                     <td className="py-2">{emp.name}</td>
                     <td className="py-2">{emp.pay_type}</td>
                     <td className="py-2">{formatCurrency(emp.rate)}</td>
@@ -470,7 +470,7 @@ export default function Payroll() {
                     <td className="py-2 text-right">
                       <button
                         onClick={() => handleDeleteEmployee(emp.id)}
-                        className="text-red-400 hover:text-red-300"
+                        className="text-gray-400 hover:text-red-600"
                         aria-label={`Delete ${emp.name}`}
                         title="Delete"
                       >
@@ -490,7 +490,7 @@ export default function Payroll() {
   const renderPeriods = () => (
     <div className="space-y-6">
       <form onSubmit={handleCreatePeriod} className="card space-y-4">
-        <h3 className="text-lg font-semibold">Add Pay Period</h3>
+        <h3 className="text-lg font-semibold text-gray-900">Add Pay Period</h3>
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
           <div>
             <label className="block text-sm font-medium mb-1">Start Date</label>
@@ -528,14 +528,14 @@ export default function Payroll() {
       </form>
 
       <div className="card">
-        <h3 className="text-lg font-semibold mb-4">Pay Periods</h3>
+        <h3 className="text-lg font-semibold text-gray-900 mb-4">Pay Periods</h3>
         {periods.length === 0 ? (
-          <p className="text-gray-400">No pay periods yet.</p>
+          <p className="text-gray-500">No pay periods yet.</p>
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full text-left">
               <thead>
-                <tr className="text-gray-400 border-b border-gray-700">
+                <tr className="text-gray-500 border-b border-gray-200 font-medium">
                   <th className="pb-2">Dates</th>
                   <th className="pb-2">Pay Date</th>
                   <th className="pb-2">Status</th>
@@ -544,14 +544,14 @@ export default function Payroll() {
               </thead>
               <tbody>
                 {periods.map(per => (
-                  <tr key={per.id} className="border-b border-gray-700 last:border-0">
+                  <tr key={per.id} className="border-b border-gray-50 last:border-0 hover:bg-gray-50/50">
                     <td className="py-2">{per.start_date} to {per.end_date}</td>
                     <td className="py-2">{per.pay_date || '-'}</td>
                     <td className="py-2 capitalize">{per.status}</td>
                     <td className="py-2 text-right">
                       <button
                         onClick={() => handleDeletePeriod(per.id)}
-                        className="text-red-400 hover:text-red-300"
+                        className="text-gray-400 hover:text-red-600"
                         aria-label="Delete period"
                         title="Delete"
                       >
@@ -571,7 +571,7 @@ export default function Payroll() {
   const renderPayslips = () => (
     <div className="space-y-6">
       <form onSubmit={handleCreatePayslip} className="card space-y-4">
-        <h3 className="text-lg font-semibold">Run Payroll</h3>
+        <h3 className="text-lg font-semibold text-gray-900">Run Payroll</h3>
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
           <div>
             <label className="block text-sm font-medium mb-1">Employee</label>
@@ -631,7 +631,7 @@ export default function Payroll() {
             <button
               type="button"
               onClick={addDeduction}
-              className="text-sm text-primary-400 hover:text-primary-300 flex items-center gap-1"
+              className="text-sm text-primary-600 hover:text-primary-700 flex items-center gap-1"
             >
               <Plus size={14} /> Add
             </button>
@@ -668,7 +668,7 @@ export default function Payroll() {
                 <button
                   type="button"
                   onClick={() => removeDeduction(idx)}
-                  className="text-red-400 hover:text-red-300 px-2"
+                  className="text-gray-400 hover:text-red-600 px-2"
                   aria-label="Remove deduction"
                 >
                   <Trash2 size={18} />
@@ -684,14 +684,14 @@ export default function Payroll() {
       </form>
 
       <div className="card">
-        <h3 className="text-lg font-semibold mb-4">Payslips</h3>
+        <h3 className="text-lg font-semibold text-gray-900 mb-4">Payslips</h3>
         {payslips.length === 0 ? (
-          <p className="text-gray-400">No payslips yet.</p>
+          <p className="text-gray-500">No payslips yet.</p>
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full text-left">
               <thead>
-                <tr className="text-gray-400 border-b border-gray-700">
+                <tr className="text-gray-500 border-b border-gray-200 font-medium">
                   <th className="pb-2">Employee</th>
                   <th className="pb-2">Period</th>
                   <th className="pb-2">Gross</th>
@@ -702,7 +702,7 @@ export default function Payroll() {
               </thead>
               <tbody>
                 {payslips.map(slip => (
-                  <tr key={slip.id} className="border-b border-gray-700 last:border-0">
+                  <tr key={slip.id} className="border-b border-gray-50 last:border-0 hover:bg-gray-50/50">
                     <td className="py-2">{getEmployeeName(slip.employee_id)}</td>
                     <td className="py-2">{getPeriodDesc(slip.period_id)}</td>
                     <td className="py-2">{formatCurrency(slip.gross_pay)}</td>
@@ -712,7 +712,7 @@ export default function Payroll() {
                       <div className="flex items-center justify-end gap-2">
                         <button
                           onClick={() => setSelectedPayslip(slip)}
-                          className="text-primary-400 hover:text-primary-300"
+                          className="text-primary-600 hover:text-primary-700"
                           aria-label="View payslip"
                           title="View"
                         >
@@ -720,7 +720,7 @@ export default function Payroll() {
                         </button>
                         <button
                           onClick={() => handleDeletePayslip(slip.id)}
-                          className="text-red-400 hover:text-red-300"
+                          className="text-gray-400 hover:text-red-600"
                           aria-label="Delete payslip"
                           title="Delete"
                         >
@@ -748,11 +748,11 @@ export default function Payroll() {
                 <Bot size={18} />
               </div>
             )}
-            <div className={`max-w-2xl rounded-2xl px-4 py-3 ${msg.role === 'user' ? 'bg-primary-600 text-white' : 'bg-gray-800 text-gray-100'}`}>
+            <div className={`max-w-2xl rounded-2xl px-4 py-3 ${msg.role === 'user' ? 'bg-primary-600 text-white' : 'bg-gray-50 text-gray-700 border border-gray-200 shadow-sm'}`}>
               <p className="whitespace-pre-wrap">{msg.content}</p>
             </div>
             {msg.role === 'user' && (
-              <div className="w-8 h-8 rounded-full bg-gray-600 flex items-center justify-center flex-shrink-0" aria-hidden="true">
+              <div className="w-8 h-8 rounded-full bg-gray-200 flex items-center justify-center flex-shrink-0 text-gray-500" aria-hidden="true">
                 <User size={18} />
               </div>
             )}
@@ -763,7 +763,7 @@ export default function Payroll() {
             <div className="w-8 h-8 rounded-full bg-primary-600 flex items-center justify-center flex-shrink-0" aria-hidden="true">
               <Bot size={18} />
             </div>
-            <div className="bg-gray-800 rounded-2xl px-4 py-3">
+            <div className="bg-gray-50 rounded-2xl px-4 py-3 border border-gray-200 shadow-sm">
               <Loader2 className="animate-spin" size={20} aria-label="Assistant is typing" />
             </div>
           </div>
@@ -771,7 +771,7 @@ export default function Payroll() {
         <div ref={messagesEndRef} />
       </div>
 
-      <form onSubmit={handleAssistantSubmit} className="p-6 border-t border-gray-700">
+      <form onSubmit={handleAssistantSubmit} className="p-6 border-t border-gray-200">
         <div className="flex gap-3">
           <input
             type="text"
@@ -800,7 +800,7 @@ export default function Payroll() {
   const renderReports = () => (
     <div className="space-y-6">
       <form onSubmit={handleLoadReport} className="card space-y-4">
-        <h3 className="text-lg font-semibold">Payroll Report</h3>
+        <h3 className="text-lg font-semibold text-gray-900">Payroll Report</h3>
         <div className="flex gap-4 items-end">
           <div className="flex-1">
             <label className="block text-sm font-medium mb-1">Pay Period</label>
@@ -834,19 +834,19 @@ export default function Payroll() {
         <div className="card space-y-4">
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
             <div>
-              <p className="text-sm text-gray-400">Employees</p>
+              <p className="text-sm text-gray-500">Employees</p>
               <p className="text-xl font-bold">{report.total_employees}</p>
             </div>
             <div>
-              <p className="text-sm text-gray-400">Total Gross</p>
+              <p className="text-sm text-gray-500">Total Gross</p>
               <p className="text-xl font-bold">{formatCurrency(report.total_gross)}</p>
             </div>
             <div>
-              <p className="text-sm text-gray-400">Total Taxes</p>
+              <p className="text-sm text-gray-500">Total Taxes</p>
               <p className="text-xl font-bold">{formatCurrency(report.total_taxes)}</p>
             </div>
             <div>
-              <p className="text-sm text-gray-400">Total Net</p>
+              <p className="text-sm text-gray-500">Total Net</p>
               <p className="text-xl font-bold">{formatCurrency(report.total_net)}</p>
             </div>
           </div>
@@ -855,7 +855,7 @@ export default function Payroll() {
             <div className="overflow-x-auto">
               <table className="w-full text-left">
                 <thead>
-                  <tr className="text-gray-400 border-b border-gray-700">
+                  <tr className="text-gray-500 border-b border-gray-200 font-medium">
                     <th className="pb-2">Employee</th>
                     <th className="pb-2">Gross</th>
                     <th className="pb-2">Federal</th>
@@ -867,7 +867,7 @@ export default function Payroll() {
                 </thead>
                 <tbody>
                   {report.rows.map((row, idx) => (
-                    <tr key={idx} className="border-b border-gray-700 last:border-0">
+                    <tr key={idx} className="border-b border-gray-50 last:border-0 hover:bg-gray-50/50">
                       <td className="py-2">{row.employee_name}</td>
                       <td className="py-2">{formatCurrency(row.gross_pay)}</td>
                       <td className="py-2">{formatCurrency(row.federal_tax)}</td>
@@ -881,7 +881,7 @@ export default function Payroll() {
               </table>
             </div>
           ) : (
-            <p className="text-gray-400">No payslips found for this period.</p>
+            <p className="text-gray-500">No payslips found for this period.</p>
           )}
         </div>
       )}
@@ -899,9 +899,9 @@ export default function Payroll() {
   const ActiveSection = sections[activeSection] || renderEmployees
 
   return (
-    <div className="flex h-full bg-gray-900">
-      <aside className="w-48 bg-gray-800 border-r border-gray-700 p-4">
-        <h2 className="text-xl font-bold text-primary-400 mb-4 flex items-center gap-2">
+    <div className="flex h-full bg-gray-50">
+      <aside className="w-48 bg-gray-50 border-r border-gray-200 p-4">
+        <h2 className="text-xl font-bold text-primary-600 mb-4 flex items-center gap-2">
           <DollarSign size={24} /> Payroll
         </h2>
         <nav className="space-y-2" role="tablist" aria-label="Payroll sections">
@@ -914,7 +914,7 @@ export default function Payroll() {
                 className={`w-full flex items-center gap-2 px-3 py-2 rounded-lg transition-colors ${
                   activeSection === section.id
                     ? 'bg-primary-600 text-white'
-                    : 'text-gray-300 hover:bg-gray-700'
+                    : 'text-gray-600 hover:bg-gray-100'
                 }`}
                 role="tab"
                 aria-selected={activeSection === section.id}
@@ -928,10 +928,10 @@ export default function Payroll() {
       </aside>
 
       <main className="flex-1 flex flex-col overflow-hidden">
-        <div className="p-4 border-b border-gray-700 flex items-center justify-between">
+        <div className="p-4 border-b border-gray-200 flex items-center justify-between">
           <div>
-            <h2 className="text-2xl font-bold">{SECTIONS.find(s => s.id === activeSection)?.label}</h2>
-            <p className="text-gray-400 text-sm">
+            <h2 className="text-2xl font-bold text-gray-900">{SECTIONS.find(s => s.id === activeSection)?.label}</h2>
+            <p className="text-gray-500 text-sm">
               {activeSection === 'employees' && 'Manage employees, pay rates and withholding.'}
               {activeSection === 'periods' && 'Create and manage pay periods.'}
               {activeSection === 'payslips' && 'Calculate and review payslips.'}
@@ -952,8 +952,8 @@ export default function Payroll() {
         </div>
 
         {error && (
-          <div className="mx-4 mt-4 p-4 bg-red-900/20 border border-red-800 rounded-lg">
-            <p className="text-red-200">{error}</p>
+          <div className="mx-4 mt-4 p-4 bg-red-50 border border-red-200 rounded-lg">
+            <p className="text-red-700">{error}</p>
           </div>
         )}
 
