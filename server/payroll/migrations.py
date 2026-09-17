@@ -13,6 +13,7 @@ Each migration runs inside its own transaction and is recorded in
 from __future__ import annotations
 
 import sqlite3
+from datetime import datetime, timezone
 from typing import Callable, NamedTuple
 
 MIGRATIONS_TABLE = "schema_migrations"
@@ -153,6 +154,42 @@ def _m007_expense_approval(conn: sqlite3.Connection) -> None:
     )
 
 
+def _m008_user_business_access(conn: sqlite3.Connection) -> None:
+    """User-to-business grants, backfilled to preserve current visibility.
+
+    Existing users keep the access they effectively had: admins become
+    owners, everyone else becomes a viewer on every existing business.
+    """
+    conn.execute(
+        """CREATE TABLE IF NOT EXISTS user_business_access (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL,
+    business_id INTEGER NOT NULL,
+    role TEXT NOT NULL DEFAULT 'viewer' CHECK(role IN ('owner', 'editor', 'viewer')),
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    UNIQUE(user_id, business_id),
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+    FOREIGN KEY (business_id) REFERENCES businesses(id) ON DELETE CASCADE
+)"""
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_uba_user ON user_business_access(user_id)"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_uba_business ON user_business_access(business_id)"
+    )
+    now = datetime.now(timezone.utc).isoformat()
+    conn.execute(
+        "INSERT OR IGNORE INTO user_business_access"
+        " (user_id, business_id, role, created_at, updated_at)"
+        " SELECT u.id, b.id,"
+        " CASE WHEN u.role = 'admin' THEN 'owner' ELSE 'viewer' END, ?, ?"
+        " FROM users u CROSS JOIN businesses b",
+        (now, now),
+    )
+
+
 MIGRATIONS: list[Migration] = [
     Migration(1, "employees_pay_frequency", _m001_employees_pay_frequency),
     Migration(2, "employee_w4_fields", _m002_employee_w4_fields),
@@ -161,6 +198,7 @@ MIGRATIONS: list[Migration] = [
     Migration(5, "journal_lines_cost_center", _m005_journal_lines_cost_center),
     Migration(6, "contacts_1099_fields", _m006_contacts_1099_fields),
     Migration(7, "expense_approval", _m007_expense_approval),
+    Migration(8, "user_business_access", _m008_user_business_access),
 ]
 
 LATEST_VERSION = MIGRATIONS[-1].version

@@ -5,26 +5,43 @@ from typing import Any
 from payroll.db import get_db, row_to_dict
 
 
-def overview() -> dict[str, Any]:
+def overview(user_id: int | None = None) -> dict[str, Any]:
     """Aggregate high-level counts and recent activity across modules.
 
     All counts are read-only and safe for any authenticated user. The
     dashboard is a read view over existing tables; it does not introduce
-    new persisted state.
+    new persisted state. Business-scoped figures are limited to the
+    businesses the user can access.
     """
     with get_db() as conn:
+        if user_id is None:
+            allowed = conn.execute("SELECT id FROM businesses").fetchall()
+        else:
+            allowed = conn.execute(
+                "SELECT business_id AS id FROM user_business_access WHERE user_id = ?",
+                (user_id,),
+            ).fetchall()
+        allowed_ids = [row["id"] for row in allowed]
+        if allowed_ids:
+            marks = ",".join("?" * len(allowed_ids))
+            scope = f"business_id IN ({marks})"
+            scope_args: tuple[Any, ...] = tuple(allowed_ids)
+        else:
+            scope = "1 = 0"
+            scope_args = ()
+
         employees = conn.execute("SELECT COUNT(*) AS n FROM employees").fetchone()["n"]
         pay_periods = conn.execute("SELECT COUNT(*) AS n FROM pay_periods").fetchone()["n"]
         payslips = conn.execute("SELECT COUNT(*) AS n FROM payslips").fetchone()["n"]
         taxpayers = conn.execute("SELECT COUNT(*) AS n FROM taxpayers").fetchone()["n"]
         tax_returns = conn.execute("SELECT COUNT(*) AS n FROM tax_returns").fetchone()["n"]
-        businesses = conn.execute("SELECT COUNT(*) AS n FROM businesses").fetchone()["n"]
-        accounts = conn.execute("SELECT COUNT(*) AS n FROM accounts").fetchone()["n"]
-        posted_entries = conn.execute("SELECT COUNT(*) AS n FROM journal_entries WHERE status = 'posted'").fetchone()["n"]
-        draft_entries = conn.execute("SELECT COUNT(*) AS n FROM journal_entries WHERE status = 'draft'").fetchone()["n"]
-        open_invoices = conn.execute("SELECT COUNT(*) AS n FROM invoices WHERE status = 'open'").fetchone()["n"]
-        paid_invoices = conn.execute("SELECT COUNT(*) AS n FROM invoices WHERE status = 'paid'").fetchone()["n"]
-        expenses = conn.execute("SELECT COUNT(*) AS n FROM expenses").fetchone()["n"]
+        businesses = len(allowed_ids)
+        accounts = conn.execute(f"SELECT COUNT(*) AS n FROM accounts WHERE {scope}", scope_args).fetchone()["n"]
+        posted_entries = conn.execute(f"SELECT COUNT(*) AS n FROM journal_entries WHERE status = 'posted' AND {scope}", scope_args).fetchone()["n"]
+        draft_entries = conn.execute(f"SELECT COUNT(*) AS n FROM journal_entries WHERE status = 'draft' AND {scope}", scope_args).fetchone()["n"]
+        open_invoices = conn.execute(f"SELECT COUNT(*) AS n FROM invoices WHERE status = 'open' AND {scope}", scope_args).fetchone()["n"]
+        paid_invoices = conn.execute(f"SELECT COUNT(*) AS n FROM invoices WHERE status = 'paid' AND {scope}", scope_args).fetchone()["n"]
+        expenses = conn.execute(f"SELECT COUNT(*) AS n FROM expenses WHERE {scope}", scope_args).fetchone()["n"]
 
         recent_payslips = [row_to_dict(row) for row in conn.execute(
             """SELECT payslips.id, payslips.created_at, payslips.gross_pay, payslips.net_pay,
@@ -33,10 +50,12 @@ def overview() -> dict[str, Any]:
                ORDER BY payslips.created_at DESC LIMIT 5""").fetchall()]
 
         recent_entries = [row_to_dict(row) for row in conn.execute(
-            """SELECT journal_entries.id, journal_entries.entry_date, journal_entries.description,
+            f"""SELECT journal_entries.id, journal_entries.entry_date, journal_entries.description,
                journal_entries.status, businesses.legal_name AS business_name
                FROM journal_entries JOIN businesses ON businesses.id = journal_entries.business_id
-               ORDER BY journal_entries.entry_date DESC, journal_entries.id DESC LIMIT 5""").fetchall()]
+               WHERE {scope}
+               ORDER BY journal_entries.entry_date DESC, journal_entries.id DESC LIMIT 5""",
+            scope_args).fetchall()]
 
         recent_returns = [row_to_dict(row) for row in conn.execute(
             """SELECT tax_returns.id, tax_returns.tax_year, tax_returns.status,

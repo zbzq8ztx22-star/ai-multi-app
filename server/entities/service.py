@@ -70,9 +70,17 @@ def create_taxpayer(data: dict[str, Any]) -> dict[str, Any]:
         return row_to_dict(row)
 
 
-def list_businesses() -> list[dict[str, Any]]:
+def list_businesses(user_id: int | None = None) -> list[dict[str, Any]]:
     with get_db() as conn:
-        rows = conn.execute("SELECT * FROM businesses ORDER BY legal_name, id").fetchall()
+        if user_id is None:
+            rows = conn.execute("SELECT * FROM businesses ORDER BY legal_name, id").fetchall()
+        else:
+            rows = conn.execute(
+                "SELECT b.* FROM businesses b"
+                " JOIN user_business_access uba ON uba.business_id = b.id"
+                " WHERE uba.user_id = ? ORDER BY b.legal_name, b.id",
+                (user_id,),
+            ).fetchall()
         return [row_to_dict(row) for row in rows]
 
 

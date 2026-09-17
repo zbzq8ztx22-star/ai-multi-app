@@ -1,18 +1,20 @@
 from typing import Any
 
-from flask import Blueprint, jsonify, request
+from flask import Blueprint, jsonify, request, session
 
 from auth import login_required
+from access import tenant_guard
 from . import service
 from . import calendar_service
 
 bp = Blueprint("dashboard", __name__, url_prefix="/api/dashboard")
+bp.before_request(tenant_guard)
 
 
 @bp.route("/overview", methods=["GET"])
 @login_required
 def overview() -> Any:
-    return jsonify(service.overview())
+    return jsonify(service.overview(session.get("user_id")))
 
 
 @bp.route("/calendar", methods=["GET"])

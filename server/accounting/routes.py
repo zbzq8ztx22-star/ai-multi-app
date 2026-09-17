@@ -3,10 +3,12 @@ from typing import Any, Callable
 from flask import Blueprint, Response, jsonify, request, session
 
 from audit import service as audit_service
-from auth import admin_required, login_required
+from auth import login_required
+from access import tenant_guard
 from . import service
 
 bp = Blueprint("accounting", __name__, url_prefix="/api/accounting")
+bp.before_request(tenant_guard)
 
 
 def _csv_response(rows: list[list[Any]], filename: str) -> Response:
@@ -52,7 +54,7 @@ def accounts() -> Any:
 
 
 @bp.route("/accounts", methods=["POST"])
-@admin_required
+@login_required
 def create_account() -> Any:
     return _json_write(service.create_account)
 
@@ -70,7 +72,7 @@ def entries() -> Any:
 
 
 @bp.route("/entries", methods=["POST"])
-@admin_required
+@login_required
 def create_entry() -> Any:
     return _json_write(service.create_entry)
 
@@ -113,7 +115,7 @@ def contacts() -> Any:
 
 
 @bp.route("/contacts", methods=["POST"])
-@admin_required
+@login_required
 def create_contact() -> Any:
     return _json_write(service.create_contact)
 
@@ -131,7 +133,7 @@ def invoices() -> Any:
 
 
 @bp.route("/invoices", methods=["POST"])
-@admin_required
+@login_required
 def create_invoice() -> Any:
     return _json_write(service.create_invoice)
 
@@ -146,7 +148,7 @@ def invoice_detail(invoice_id: int) -> Any:
 
 
 @bp.route("/invoices/<int:invoice_id>/void", methods=["PUT"])
-@admin_required
+@login_required
 def void_invoice(invoice_id: int) -> Any:
     try:
         return jsonify(service.void_invoice(invoice_id))
@@ -209,7 +211,7 @@ def print_invoice(invoice_id: int) -> Any:
 
 
 @bp.route("/payments", methods=["POST"])
-@admin_required
+@login_required
 def create_payment() -> Any:
     return _json_write(service.record_payment)
 
@@ -227,7 +229,7 @@ def expenses() -> Any:
 
 
 @bp.route("/expenses", methods=["POST"])
-@admin_required
+@login_required
 def create_expense() -> Any:
     return _json_write(service.create_expense)
 
@@ -245,7 +247,7 @@ def pending_expenses() -> Any:
 
 
 @bp.route("/expenses/<int:expense_id>/approve", methods=["PUT"])
-@admin_required
+@login_required
 def approve_expense(expense_id: int) -> Any:
     data = request.get_json(silent=True) or {}
     approver = data.get("approver", "")
@@ -256,7 +258,7 @@ def approve_expense(expense_id: int) -> Any:
 
 
 @bp.route("/expenses/<int:expense_id>/reject", methods=["PUT"])
-@admin_required
+@login_required
 def reject_expense(expense_id: int) -> Any:
     data = request.get_json(silent=True) or {}
     approver = data.get("approver", "")
@@ -321,7 +323,7 @@ def budgets() -> Any:
 
 
 @bp.route("/budgets", methods=["POST"])
-@admin_required
+@login_required
 def create_budget() -> Any:
     data = request.get_json(silent=True)
     if not isinstance(data, dict):
@@ -335,7 +337,7 @@ def create_budget() -> Any:
 
 
 @bp.route("/budgets/<int:budget_id>", methods=["PUT"])
-@admin_required
+@login_required
 def update_budget(budget_id: int) -> Any:
     data = request.get_json(silent=True)
     if not isinstance(data, dict):
@@ -349,7 +351,7 @@ def update_budget(budget_id: int) -> Any:
 
 
 @bp.route("/budgets/<int:budget_id>", methods=["DELETE"])
-@admin_required
+@login_required
 def delete_budget(budget_id: int) -> Any:
     try:
         service.delete_budget(budget_id)
@@ -472,13 +474,13 @@ def reconciliations() -> Any:
 
 
 @bp.route("/reconciliations", methods=["POST"])
-@admin_required
+@login_required
 def create_reconciliation() -> Any:
     return _json_write(service.create_reconciliation)
 
 
 @bp.route("/reconciliations/<int:reconciliation_id>", methods=["PUT"])
-@admin_required
+@login_required
 def update_reconciliation(reconciliation_id: int) -> Any:
     data = request.get_json(silent=True)
     if not isinstance(data, dict):
@@ -490,7 +492,7 @@ def update_reconciliation(reconciliation_id: int) -> Any:
 
 
 @bp.route("/reconciliations/<int:reconciliation_id>", methods=["DELETE"])
-@admin_required
+@login_required
 def delete_reconciliation(reconciliation_id: int) -> Any:
     try:
         service.delete_reconciliation(reconciliation_id)
@@ -600,13 +602,13 @@ def recurring_expenses() -> Any:
 
 
 @bp.route("/recurring-expenses", methods=["POST"])
-@admin_required
+@login_required
 def create_recurring_expense() -> Any:
     return _json_write(service.create_recurring_expense)
 
 
 @bp.route("/recurring-expenses/<int:recurring_id>", methods=["PUT"])
-@admin_required
+@login_required
 def update_recurring_expense(recurring_id: int) -> Any:
     data = request.get_json(silent=True)
     if not isinstance(data, dict):
@@ -618,7 +620,7 @@ def update_recurring_expense(recurring_id: int) -> Any:
 
 
 @bp.route("/recurring-expenses/<int:recurring_id>", methods=["DELETE"])
-@admin_required
+@login_required
 def delete_recurring_expense(recurring_id: int) -> Any:
     try:
         service.delete_recurring_expense(recurring_id)
@@ -628,7 +630,7 @@ def delete_recurring_expense(recurring_id: int) -> Any:
 
 
 @bp.route("/recurring-expenses/post-due", methods=["POST"])
-@admin_required
+@login_required
 def post_due_recurring() -> Any:
     business_id = request.args.get("business_id", type=int)
     as_of = request.args.get("as_of")
@@ -654,7 +656,7 @@ def closing_periods() -> Any:
 
 
 @bp.route("/closing-periods", methods=["POST"])
-@admin_required
+@login_required
 def close_period() -> Any:
     data = request.get_json(silent=True)
     if not isinstance(data, dict):
@@ -666,7 +668,7 @@ def close_period() -> Any:
 
 
 @bp.route("/closing-periods/<int:period_id>", methods=["DELETE"])
-@admin_required
+@login_required
 def reopen_period(period_id: int) -> Any:
     try:
         service.reopen_period(period_id)
@@ -729,7 +731,7 @@ def account_groups() -> Any:
 
 
 @bp.route("/account-groups", methods=["POST"])
-@admin_required
+@login_required
 def create_account_group() -> Any:
     data = request.get_json(silent=True)
     if not isinstance(data, dict):
@@ -741,7 +743,7 @@ def create_account_group() -> Any:
 
 
 @bp.route("/account-groups/<int:group_id>", methods=["PUT"])
-@admin_required
+@login_required
 def update_account_group(group_id: int) -> Any:
     data = request.get_json(silent=True)
     if not isinstance(data, dict):
@@ -753,7 +755,7 @@ def update_account_group(group_id: int) -> Any:
 
 
 @bp.route("/account-groups/<int:group_id>", methods=["DELETE"])
-@admin_required
+@login_required
 def delete_account_group(group_id: int) -> Any:
     try:
         service.delete_account_group(group_id)
@@ -763,7 +765,7 @@ def delete_account_group(group_id: int) -> Any:
 
 
 @bp.route("/accounts/<int:account_id>/assign-group", methods=["PUT"])
-@admin_required
+@login_required
 def assign_account_to_group(account_id: int) -> Any:
     data = request.get_json(silent=True)
     if not isinstance(data, dict):
@@ -790,7 +792,7 @@ def payment_terms() -> Any:
 
 
 @bp.route("/payment-terms", methods=["POST"])
-@admin_required
+@login_required
 def create_payment_terms() -> Any:
     data = request.get_json(silent=True)
     if not isinstance(data, dict):
@@ -802,7 +804,7 @@ def create_payment_terms() -> Any:
 
 
 @bp.route("/payment-terms/<int:term_id>", methods=["PUT"])
-@admin_required
+@login_required
 def update_payment_terms(term_id: int) -> Any:
     data = request.get_json(silent=True)
     if not isinstance(data, dict):
@@ -814,7 +816,7 @@ def update_payment_terms(term_id: int) -> Any:
 
 
 @bp.route("/payment-terms/<int:term_id>", methods=["DELETE"])
-@admin_required
+@login_required
 def delete_payment_terms(term_id: int) -> Any:
     try:
         service.delete_payment_terms(term_id)
@@ -836,7 +838,7 @@ def credit_notes() -> Any:
 
 
 @bp.route("/credit-notes", methods=["POST"])
-@admin_required
+@login_required
 def create_credit_note() -> Any:
     data = request.get_json(silent=True)
     if not isinstance(data, dict):
@@ -848,7 +850,7 @@ def create_credit_note() -> Any:
 
 
 @bp.route("/credit-notes/<int:credit_id>/void", methods=["PUT"])
-@admin_required
+@login_required
 def void_credit_note(credit_id: int) -> Any:
     business_id = request.args.get("business_id", type=int)
     if business_id is None:
@@ -872,7 +874,7 @@ def depreciation_assets() -> Any:
 
 
 @bp.route("/depreciation-assets", methods=["POST"])
-@admin_required
+@login_required
 def create_depreciation_asset() -> Any:
     data = request.get_json(silent=True)
     if not isinstance(data, dict):
@@ -893,7 +895,7 @@ def depreciation_schedule(asset_id: int) -> Any:
 
 
 @bp.route("/depreciation-assets/<int:asset_id>/post", methods=["POST"])
-@admin_required
+@login_required
 def post_depreciation(asset_id: int) -> Any:
     data = request.get_json(silent=True)
     if not isinstance(data, dict):
@@ -948,7 +950,7 @@ def projects() -> Any:
 
 
 @bp.route("/projects", methods=["POST"])
-@admin_required
+@login_required
 def create_project() -> Any:
     data = request.get_json(silent=True)
     if not isinstance(data, dict):
@@ -960,7 +962,7 @@ def create_project() -> Any:
 
 
 @bp.route("/projects/<int:project_id>", methods=["PUT"])
-@admin_required
+@login_required
 def update_project(project_id: int) -> Any:
     data = request.get_json(silent=True)
     if not isinstance(data, dict):
@@ -972,7 +974,7 @@ def update_project(project_id: int) -> Any:
 
 
 @bp.route("/projects/<int:project_id>", methods=["DELETE"])
-@admin_required
+@login_required
 def delete_project(project_id: int) -> Any:
     try:
         service.delete_project(project_id)
@@ -1021,7 +1023,7 @@ def bank_transactions() -> Any:
 
 
 @bp.route("/bank-transactions", methods=["POST"])
-@admin_required
+@login_required
 def create_bank_transaction() -> Any:
     data = request.get_json(silent=True)
     if not isinstance(data, dict):
@@ -1033,7 +1035,7 @@ def create_bank_transaction() -> Any:
 
 
 @bp.route("/bank-transactions/<int:tx_id>/match", methods=["PUT"])
-@admin_required
+@login_required
 def match_bank_transaction(tx_id: int) -> Any:
     data = request.get_json(silent=True)
     if not isinstance(data, dict) or "journal_line_id" not in data:
@@ -1045,7 +1047,7 @@ def match_bank_transaction(tx_id: int) -> Any:
 
 
 @bp.route("/bank-transactions/<int:tx_id>/unmatch", methods=["PUT"])
-@admin_required
+@login_required
 def unmatch_bank_transaction(tx_id: int) -> Any:
     try:
         return jsonify(service.unmatch_bank_transaction(tx_id))
@@ -1054,7 +1056,7 @@ def unmatch_bank_transaction(tx_id: int) -> Any:
 
 
 @bp.route("/bank-transactions/<int:tx_id>", methods=["DELETE"])
-@admin_required
+@login_required
 def delete_bank_transaction(tx_id: int) -> Any:
     try:
         service.delete_bank_transaction(tx_id)
@@ -1089,7 +1091,7 @@ def sales_tax_rates() -> Any:
 
 
 @bp.route("/sales-tax-rates", methods=["POST"])
-@admin_required
+@login_required
 def create_sales_tax_rate() -> Any:
     data = request.get_json(silent=True)
     if not isinstance(data, dict):
@@ -1101,7 +1103,7 @@ def create_sales_tax_rate() -> Any:
 
 
 @bp.route("/sales-tax-rates/<int:rate_id>", methods=["PUT"])
-@admin_required
+@login_required
 def update_sales_tax_rate(rate_id: int) -> Any:
     data = request.get_json(silent=True)
     if not isinstance(data, dict):
@@ -1113,7 +1115,7 @@ def update_sales_tax_rate(rate_id: int) -> Any:
 
 
 @bp.route("/sales-tax-rates/<int:rate_id>", methods=["DELETE"])
-@admin_required
+@login_required
 def delete_sales_tax_rate(rate_id: int) -> Any:
     try:
         service.delete_sales_tax_rate(rate_id)
@@ -1163,7 +1165,7 @@ def purchase_orders() -> Any:
 
 
 @bp.route("/purchase-orders", methods=["POST"])
-@admin_required
+@login_required
 def create_purchase_order() -> Any:
     data = request.get_json(silent=True)
     if not isinstance(data, dict):
@@ -1175,7 +1177,7 @@ def create_purchase_order() -> Any:
 
 
 @bp.route("/purchase-orders/<int:po_id>/status", methods=["PUT"])
-@admin_required
+@login_required
 def update_purchase_order_status(po_id: int) -> Any:
     data = request.get_json(silent=True)
     if not isinstance(data, dict) or "status" not in data:
@@ -1187,7 +1189,7 @@ def update_purchase_order_status(po_id: int) -> Any:
 
 
 @bp.route("/purchase-orders/<int:po_id>", methods=["DELETE"])
-@admin_required
+@login_required
 def delete_purchase_order(po_id: int) -> Any:
     try:
         service.delete_purchase_order(po_id)
@@ -1209,7 +1211,7 @@ def fixed_asset_register() -> Any:
 
 
 @bp.route("/depreciation-assets/<int:asset_id>/dispose", methods=["POST"])
-@admin_required
+@login_required
 def dispose_fixed_asset(asset_id: int) -> Any:
     data = request.get_json(silent=True)
     if not isinstance(data, dict):
@@ -1252,7 +1254,7 @@ def report_1099() -> Any:
 
 
 @bp.route("/contacts/<int:contact_id>/1099", methods=["PUT"])
-@admin_required
+@login_required
 def update_contact_1099(contact_id: int) -> Any:
     data = request.get_json(silent=True)
     if not isinstance(data, dict):
@@ -1293,7 +1295,7 @@ def get_chart_template(template_name: str) -> Any:
 
 
 @bp.route("/chart-templates/<template_name>/apply", methods=["POST"])
-@admin_required
+@login_required
 def apply_chart_template(template_name: str) -> Any:
     business_id = request.args.get("business_id", type=int)
     if business_id is None:

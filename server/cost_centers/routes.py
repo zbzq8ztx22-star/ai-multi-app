@@ -2,10 +2,12 @@ from typing import Any
 
 from flask import Blueprint, jsonify, request
 
-from auth import admin_required, login_required
+from auth import login_required
+from access import tenant_guard
 from . import service
 
 bp = Blueprint("cost_centers", __name__, url_prefix="/api/cost-centers")
+bp.before_request(tenant_guard)
 
 
 @bp.route("", methods=["GET"])
@@ -22,7 +24,7 @@ def list_cost_centers() -> Any:
 
 
 @bp.route("", methods=["POST"])
-@admin_required
+@login_required
 def create_cost_center() -> Any:
     data = request.get_json(silent=True)
     if not isinstance(data, dict):
@@ -34,7 +36,7 @@ def create_cost_center() -> Any:
 
 
 @bp.route("/<int:cost_center_id>", methods=["PUT"])
-@admin_required
+@login_required
 def update_cost_center(cost_center_id: int) -> Any:
     data = request.get_json(silent=True)
     if not isinstance(data, dict):
@@ -46,7 +48,7 @@ def update_cost_center(cost_center_id: int) -> Any:
 
 
 @bp.route("/<int:cost_center_id>", methods=["DELETE"])
-@admin_required
+@login_required
 def delete_cost_center(cost_center_id: int) -> Any:
     try:
         service.delete_cost_center(cost_center_id)

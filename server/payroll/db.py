@@ -106,6 +106,21 @@ CREATE TABLE IF NOT EXISTS users (
 
 CREATE INDEX IF NOT EXISTS idx_users_username ON users(username);
 
+CREATE TABLE IF NOT EXISTS user_business_access (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL,
+    business_id INTEGER NOT NULL,
+    role TEXT NOT NULL DEFAULT 'viewer' CHECK(role IN ('owner', 'editor', 'viewer')),
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    UNIQUE(user_id, business_id),
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+    FOREIGN KEY (business_id) REFERENCES businesses(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_uba_user ON user_business_access(user_id);
+CREATE INDEX IF NOT EXISTS idx_uba_business ON user_business_access(business_id);
+
 CREATE TABLE IF NOT EXISTS taxpayers (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     employee_id INTEGER,

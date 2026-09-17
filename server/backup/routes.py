@@ -1,11 +1,15 @@
+from __future__ import annotations
+
 from typing import Any
 
-from flask import Blueprint, Response, jsonify, request
+from flask import Blueprint, Response, jsonify, request, session
 
 from auth import admin_required
+from access import grant_access, tenant_guard
 from . import service
 
 bp = Blueprint("backup", __name__, url_prefix="/api/backup")
+bp.before_request(tenant_guard)
 
 
 @bp.route("/export/<int:business_id>", methods=["GET"])
@@ -29,6 +33,8 @@ def import_data() -> Any:
     if not isinstance(data, dict):
         return jsonify({"error": "Request body must be JSON"}), 400
     try:
-        return jsonify(service.import_business(data)), 201
+        result = service.import_business(data)
     except ValueError as exc:
         return jsonify({"error": str(exc)}), 400
+    grant_access(session["user_id"], result["business_id"], "owner")
+    return jsonify(result), 201
