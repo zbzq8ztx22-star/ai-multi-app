@@ -896,7 +896,7 @@ export default function Payroll() {
     assistant: renderAssistant,
   }
 
-  const ActiveSection = sections[activeSection] || renderEmployees
+  const renderActiveSection = sections[activeSection] || renderEmployees
 
   return (
     <div className="flex h-full bg-gray-50">
@@ -958,7 +958,7 @@ export default function Payroll() {
         )}
 
         <div className="flex-1 overflow-y-auto p-6">
-          <ActiveSection />
+          {renderActiveSection()}
         </div>
       </main>
 
