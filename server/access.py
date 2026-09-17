@@ -21,6 +21,7 @@ access both) remains the service layer's job, unchanged.
 """
 from __future__ import annotations
 
+import math
 import sqlite3
 from typing import Any
 
@@ -98,6 +99,36 @@ _INDIRECT_BUSINESS_SQL = {
 }
 
 
+def normalize_id(value: Any) -> int | None:
+    """Return the integer a service would act on for this identifier, or None.
+
+    Authorization must see every representation the service layer accepts:
+    services coerce ids with ``int(...)`` (ints, floats, decimal strings with
+    optional sign/whitespace/underscores), and SQLite's numeric affinity
+    additionally matches well-formed real literals such as ``"2.0"``. Booleans
+    and non-numeric values are rejected.
+    """
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float):
+        return int(value) if math.isfinite(value) else None
+    if isinstance(value, str):
+        text = value.strip()
+        if not text:
+            return None
+        try:
+            return int(text)
+        except ValueError:
+            try:
+                number = float(text)
+            except ValueError:
+                return None
+            return int(number) if math.isfinite(number) else None
+    return None
+
+
 def business_id_of(conn: sqlite3.Connection, table: str, record_id: int) -> int | None:
     """Return the owning business_id for a record, or None if it doesn't exist."""
     if table == "businesses":
@@ -142,6 +173,14 @@ def grant_access(user_id: int, business_id: int, role: str) -> None:
         raise ValueError("Invalid role")
     now = now_utc()
     with get_db() as conn:
+        if conn.execute(
+            "SELECT 1 FROM users WHERE id = ?", (user_id,)
+        ).fetchone() is None:
+            raise ValueError("User not found")
+        if conn.execute(
+            "SELECT 1 FROM businesses WHERE id = ?", (business_id,)
+        ).fetchone() is None:
+            raise ValueError("Business not found")
         conn.execute(
             "INSERT INTO user_business_access (user_id, business_id, role, created_at, updated_at)"
             " VALUES (?, ?, ?, ?, ?)"
@@ -209,17 +248,25 @@ def require_business_access(business_id: int, min_role: str = "viewer") -> Any:
     return _check_access(user_id, business_id, min_role)
 
 
-def _collect_body_refs(value: Any, out: list[tuple[str, int]]) -> None:
+def _collect_body_refs(
+    value: Any, out: list[tuple[str, int]], invalid: list[str]
+) -> None:
     if isinstance(value, dict):
         for key, item in value.items():
             table = FIELD_TO_TABLE.get(key)
-            if table is not None and isinstance(item, int) and not isinstance(item, bool):
-                out.append((table, item))
+            if table is not None:
+                if item is None:
+                    continue
+                record_id = normalize_id(item)
+                if record_id is None:
+                    invalid.append(key)
+                else:
+                    out.append((table, record_id))
             elif isinstance(item, (dict, list)):
-                _collect_body_refs(item, out)
+                _collect_body_refs(item, out, invalid)
     elif isinstance(value, list):
         for item in value:
-            _collect_body_refs(item, out)
+            _collect_body_refs(item, out, invalid)
 
 
 def tenant_guard() -> Any:
@@ -233,16 +280,30 @@ def tenant_guard() -> Any:
     min_role = "viewer" if request.method in ("GET", "HEAD") else "editor"
 
     refs: list[tuple[str, int]] = []
+    invalid: list[str] = []
     for key, value in (request.view_args or {}).items():
         table = FIELD_TO_TABLE.get(key)
-        if table is not None and isinstance(value, int):
-            refs.append((table, value))
+        if table is not None:
+            record_id = normalize_id(value)
+            if record_id is None:
+                invalid.append(key)
+            else:
+                refs.append((table, record_id))
     for key, table in FIELD_TO_TABLE.items():
-        value = request.args.get(key, type=int)
-        if value is not None:
-            refs.append((table, value))
+        raw = request.args.get(key)
+        if raw is not None:
+            record_id = normalize_id(raw)
+            if record_id is None:
+                invalid.append(key)
+            else:
+                refs.append((table, record_id))
     if request.is_json:
-        _collect_body_refs(request.get_json(silent=True), refs)
+        _collect_body_refs(request.get_json(silent=True), refs, invalid)
+
+    # A known resource-reference field carrying a value no service could use
+    # as an id is rejected outright rather than silently skipped.
+    if invalid:
+        return jsonify({"error": f"Invalid identifier: {sorted(set(invalid))[0]}"}), 400
 
     business_ids: set[int] = set()
     with get_db() as conn:

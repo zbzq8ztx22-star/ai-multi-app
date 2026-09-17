@@ -155,10 +155,12 @@ def _m007_expense_approval(conn: sqlite3.Connection) -> None:
 
 
 def _m008_user_business_access(conn: sqlite3.Connection) -> None:
-    """User-to-business grants, backfilled to preserve current visibility.
+    """User-to-business grants; the upgrade fails closed.
 
-    Existing users keep the access they effectively had: admins become
-    owners, everyone else becomes a viewer on every existing business.
+    Only existing global admins become owners of existing businesses so
+    administration is not lost. Every other user receives no automatic
+    grants — an owner must assign their memberships explicitly after the
+    upgrade.
     """
     conn.execute(
         """CREATE TABLE IF NOT EXISTS user_business_access (
@@ -183,9 +185,8 @@ def _m008_user_business_access(conn: sqlite3.Connection) -> None:
     conn.execute(
         "INSERT OR IGNORE INTO user_business_access"
         " (user_id, business_id, role, created_at, updated_at)"
-        " SELECT u.id, b.id,"
-        " CASE WHEN u.role = 'admin' THEN 'owner' ELSE 'viewer' END, ?, ?"
-        " FROM users u CROSS JOIN businesses b",
+        " SELECT u.id, b.id, 'owner', ?, ?"
+        " FROM users u CROSS JOIN businesses b WHERE u.role = 'admin'",
         (now, now),
     )
 

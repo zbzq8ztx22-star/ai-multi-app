@@ -74,7 +74,7 @@ def business_access_grant(business_id: int) -> Any:
         return jsonify({"error": "Request body must be JSON"}), 400
     user_id = data.get("user_id")
     role = str(data.get("role", ""))
-    if not isinstance(user_id, int):
+    if not isinstance(user_id, int) or isinstance(user_id, bool):
         return jsonify({"error": "user_id is required"}), 400
     if role not in BUSINESS_ROLES:
         return jsonify({"error": "Invalid role"}), 400
