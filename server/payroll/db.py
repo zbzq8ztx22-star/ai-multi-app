@@ -8,6 +8,8 @@ from typing import Any, Generator
 
 from flask import current_app
 
+from .migrations import MIGRATIONS, MIGRATIONS_TABLE
+
 DEFAULT_DB_PATH = Path(__file__).resolve().parent.parent / "data" / "payroll.db"
 
 SCHEMA = """
@@ -703,30 +705,60 @@ def get_db() -> Generator[sqlite3.Connection, None, None]:
         conn.close()
 
 
-def _column_exists(conn: sqlite3.Connection, table: str, column: str) -> bool:
-    rows = conn.execute(f"PRAGMA table_info({table})").fetchall()
-    return any(row["name"] == column for row in rows)
+def _ensure_migrations_table(conn: sqlite3.Connection) -> None:
+    conn.execute(
+        f"CREATE TABLE IF NOT EXISTS {MIGRATIONS_TABLE} ("
+        " version INTEGER PRIMARY KEY,"
+        " name TEXT NOT NULL,"
+        " applied_at TEXT NOT NULL)"
+    )
 
 
-def _migrate(conn: sqlite3.Connection) -> None:
-    """Add columns that were introduced after the initial schema."""
-    migrations: list[tuple[str, str, str]] = [
-        ("employees", "dependents", "INTEGER NOT NULL DEFAULT 0"),
-        ("employees", "other_income", "REAL NOT NULL DEFAULT 0"),
-        ("employees", "w4_deductions", "REAL NOT NULL DEFAULT 0"),
-        ("employees", "multiple_jobs", "INTEGER NOT NULL DEFAULT 0"),
-        ("payslips", "fica_wages", "REAL NOT NULL DEFAULT 0"),
-        ("payslips", "medicare_wages", "REAL NOT NULL DEFAULT 0"),
-    ]
-    for table, column, ddl in migrations:
-        if not _column_exists(conn, table, column):
-            conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {ddl}")
+def applied_versions(conn: sqlite3.Connection) -> set[int]:
+    _ensure_migrations_table(conn)
+    rows = conn.execute(f"SELECT version FROM {MIGRATIONS_TABLE}").fetchall()
+    return {row["version"] for row in rows}
+
+
+def run_migrations(conn: sqlite3.Connection) -> list[int]:
+    """Apply pending migrations, each in its own transaction.
+
+    Returns the versions applied during this call. Never removes data; a
+    failed migration rolls back and re-raises so init_db fails loudly.
+    """
+    applied = applied_versions(conn)
+    ran: list[int] = []
+    for migration in MIGRATIONS:
+        if migration.version in applied:
+            continue
+        conn.execute("BEGIN")
+        try:
+            migration.apply(conn)
+            conn.execute(
+                f"INSERT INTO {MIGRATIONS_TABLE} (version, name, applied_at)"
+                " VALUES (?, ?, ?)",
+                (migration.version, migration.name, now_utc()),
+            )
+            conn.execute("COMMIT")
+        except Exception:
+            conn.execute("ROLLBACK")
+            raise
+        ran.append(migration.version)
+    return ran
 
 
 def init_db() -> None:
+    """Create missing tables from SCHEMA, then apply pending migrations.
+
+    SCHEMA uses CREATE TABLE IF NOT EXISTS, so it only fills gaps on existing
+    databases at the latest definition; numbered migrations then upgrade
+    pre-existing tables (renames, added columns, rebuilds). Runs at app
+    startup inside init_app(), before any request is served.
+    """
     with get_db() as conn:
         conn.executescript(SCHEMA)
-        _migrate(conn)
+        _ensure_migrations_table(conn)
+        run_migrations(conn)
         conn.commit()
 
 
