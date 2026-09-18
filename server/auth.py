@@ -8,6 +8,7 @@ from flask import Blueprint, Request, jsonify, request, session
 from werkzeug.security import check_password_hash, generate_password_hash
 
 from payroll.db import get_db, now_utc
+from access import solely_owned_businesses
 
 bp = Blueprint("auth", __name__, url_prefix="/api/auth")
 
@@ -63,6 +64,10 @@ def delete_user(user_id: int) -> None:
         count = conn.execute("SELECT COUNT(*) AS c FROM users").fetchone()["c"]
         if count <= 1:
             raise ValueError("Cannot delete the last user")
+        if solely_owned_businesses(conn, user_id):
+            raise ValueError(
+                "User is the sole owner of a business; transfer ownership first"
+            )
         conn.execute("DELETE FROM users WHERE id = ?", (user_id,))
         conn.commit()
 

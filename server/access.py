@@ -168,6 +168,40 @@ def accessible_business_ids(user_id: int) -> list[int]:
         return [row["business_id"] for row in rows]
 
 
+def _assert_not_last_owner(
+    conn: sqlite3.Connection, user_id: int, business_id: int
+) -> None:
+    """Raise when removing or downgrading this user would orphan the business."""
+    current = conn.execute(
+        "SELECT role FROM user_business_access WHERE user_id = ? AND business_id = ?",
+        (user_id, business_id),
+    ).fetchone()
+    if current is None or current["role"] != "owner":
+        return
+    owners = conn.execute(
+        "SELECT COUNT(*) AS n FROM user_business_access"
+        " WHERE business_id = ? AND role = 'owner'",
+        (business_id,),
+    ).fetchone()["n"]
+    if owners <= 1:
+        raise ValueError("Cannot remove or downgrade the last owner")
+
+
+def solely_owned_businesses(conn: sqlite3.Connection, user_id: int) -> list[int]:
+    """Businesses where this user is the only owner."""
+    rows = conn.execute(
+        "SELECT uba.business_id FROM user_business_access uba"
+        " WHERE uba.user_id = ? AND uba.role = 'owner'"
+        " AND NOT EXISTS ("
+        " SELECT 1 FROM user_business_access other"
+        " WHERE other.business_id = uba.business_id AND other.role = 'owner'"
+        " AND other.user_id != uba.user_id"
+        " )",
+        (user_id,),
+    ).fetchall()
+    return [row["business_id"] for row in rows]
+
+
 def grant_access(user_id: int, business_id: int, role: str) -> None:
     if role not in BUSINESS_ROLES:
         raise ValueError("Invalid role")
@@ -181,6 +215,8 @@ def grant_access(user_id: int, business_id: int, role: str) -> None:
             "SELECT 1 FROM businesses WHERE id = ?", (business_id,)
         ).fetchone() is None:
             raise ValueError("Business not found")
+        if role != "owner":
+            _assert_not_last_owner(conn, user_id, business_id)
         conn.execute(
             "INSERT INTO user_business_access (user_id, business_id, role, created_at, updated_at)"
             " VALUES (?, ?, ?, ?, ?)"
@@ -192,19 +228,13 @@ def grant_access(user_id: int, business_id: int, role: str) -> None:
 
 def revoke_access(user_id: int, business_id: int) -> None:
     with get_db() as conn:
-        owner_count = conn.execute(
-            "SELECT COUNT(*) AS n FROM user_business_access"
-            " WHERE business_id = ? AND role = 'owner'",
-            (business_id,),
-        ).fetchone()["n"]
         current = conn.execute(
             "SELECT role FROM user_business_access WHERE user_id = ? AND business_id = ?",
             (user_id, business_id),
         ).fetchone()
         if current is None:
             raise ValueError("Access grant not found")
-        if current["role"] == "owner" and owner_count <= 1:
-            raise ValueError("Cannot revoke the last owner")
+        _assert_not_last_owner(conn, user_id, business_id)
         conn.execute(
             "DELETE FROM user_business_access WHERE user_id = ? AND business_id = ?",
             (user_id, business_id),

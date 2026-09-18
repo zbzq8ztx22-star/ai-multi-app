@@ -624,3 +624,71 @@ def test_grant_access_to_nonexistent_user_is_controlled(app):
         f"/api/entities/businesses/{business_a['id']}/access"
     ).get_json()
     assert {g["user_id"] for g in grants} == {1}
+
+
+def test_sole_owner_cannot_be_downgraded(app):
+    client_a, business_a, _, _ = _two_tenants(app)
+    for role in ("editor", "viewer"):
+        response = client_a.post(
+            f"/api/entities/businesses/{business_a['id']}/access",
+            json={"user_id": 1, "role": role},
+        )
+        assert response.status_code == 400
+    # She is still the owner afterwards.
+    grants = client_a.get(
+        f"/api/entities/businesses/{business_a['id']}/access"
+    ).get_json()
+    assert grants[0]["role"] == "owner"
+
+
+def test_owner_downgrade_allowed_when_another_owner_remains(app):
+    client_a, business_a, client_b, _ = _two_tenants(app)
+    response = client_a.post(
+        f"/api/entities/businesses/{business_a['id']}/access",
+        json={"user_id": 2, "role": "owner"},
+    )
+    assert response.status_code == 201
+
+    response = client_a.post(
+        f"/api/entities/businesses/{business_a['id']}/access",
+        json={"user_id": 1, "role": "editor"},
+    )
+    assert response.status_code == 201
+    grants = {
+        g["user_id"]: g["role"]
+        for g in client_b.get(
+            f"/api/entities/businesses/{business_a['id']}/access"
+        ).get_json()
+    }
+    assert grants == {1: "editor", 2: "owner"}
+
+    # The new sole owner can no longer be downgraded or revoked.
+    assert client_b.post(
+        f"/api/entities/businesses/{business_a['id']}/access",
+        json={"user_id": 2, "role": "viewer"},
+    ).status_code == 400
+    assert client_b.delete(
+        f"/api/entities/businesses/{business_a['id']}/access/2"
+    ).status_code == 400
+
+
+def test_cannot_delete_sole_business_owner(app):
+    admin = app.test_client()
+    _register(admin, "root", role="admin")
+    client_b = app.test_client()
+    _register(client_b, "bob")
+    business_b = _make_business(client_b, "Beta LLC")
+
+    # Bob is the sole owner of Beta LLC: deleting him is blocked.
+    response = admin.delete("/api/auth/users/2")
+    assert response.status_code == 400
+    users = {u["id"] for u in admin.get("/api/auth/users").get_json()}
+    assert 2 in users
+
+    # Once another owner exists, deletion is allowed again.
+    response = client_b.post(
+        f"/api/entities/businesses/{business_b['id']}/access",
+        json={"user_id": 1, "role": "owner"},
+    )
+    assert response.status_code == 201
+    assert admin.delete("/api/auth/users/2").status_code == 200
