@@ -11,11 +11,6 @@ name: 'Dependency review'
 on:
   pull_request:
     branches: [ "main" ]
-  # Also scan pushes: pull_request events are not currently dispatching
-  # Actions runs in this repository, and push runs still surface as checks
-  # on the PR head commit.
-  push:
-    branches: [ "**" ]
 
 # If using a dependency submission action in this workflow this permission will need to be set to:
 #
@@ -38,7 +33,7 @@ jobs:
         uses: actions/dependency-review-action@v4
         # Commonly enabled options, see https://github.com/actions/dependency-review-action#configuration-options for all available options.
         with:
-          comment-summary-in-pr: ${{ github.event_name == 'pull_request' && 'always' || 'never' }}
+          comment-summary-in-pr: always
         #   fail-on-severity: moderate
         #   deny-licenses: GPL-1.0-or-later, LGPL-2.0-or-later
         #   retry-on-snapshot-warnings: true
