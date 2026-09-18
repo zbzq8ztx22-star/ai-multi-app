@@ -76,7 +76,30 @@ FIELD_TO_TABLE = {
     "journal_line_id": "journal_lines",
     "from_currency_id": "currencies",
     "to_currency_id": "currencies",
+    "employee_id": "employees",
+    "payslip_id": "payslips",
+    "pay_period_id": "pay_periods",
 }
+
+# Blueprint-specific meanings for a field already mapped globally. Payroll
+# calls its pay-period identifier ``period_id`` in paths, query args and
+# bodies, which elsewhere means a closing_periods id.
+FIELD_TO_TABLE_OVERRIDES = {
+    "payroll": {"period_id": "pay_periods"},
+}
+
+
+def _table_for_field(key: str) -> str | None:
+    override = FIELD_TO_TABLE_OVERRIDES.get(request.blueprint or "")
+    if override is not None and key in override:
+        return override[key]
+    return FIELD_TO_TABLE.get(key)
+
+
+def _mapped_fields() -> set[str]:
+    override = FIELD_TO_TABLE_OVERRIDES.get(request.blueprint or "")
+    return set(FIELD_TO_TABLE) | set(override or {})
+
 
 # Tables whose business_id lives on a parent row.
 _INDIRECT_BUSINESS_SQL = {
@@ -95,6 +118,10 @@ _INDIRECT_BUSINESS_SQL = {
     "inventory_movements": (
         "SELECT i.business_id FROM inventory_movements m"
         " JOIN inventory_items i ON i.id = m.item_id WHERE m.id = ?"
+    ),
+    "payslips": (
+        "SELECT e.business_id FROM payslips p"
+        " JOIN employees e ON e.id = p.employee_id WHERE p.id = ?"
     ),
 }
 
@@ -283,7 +310,7 @@ def _collect_body_refs(
 ) -> None:
     if isinstance(value, dict):
         for key, item in value.items():
-            table = FIELD_TO_TABLE.get(key)
+            table = _table_for_field(key)
             if table is not None:
                 if item is None:
                     continue
@@ -307,26 +334,32 @@ def tenant_guard() -> Any:
         # OPTIONS preflights carry no cookies.
         return None
 
-    min_role = "viewer" if request.method in ("GET", "HEAD") else "editor"
+    # The payroll assistant is read-only despite being a POST endpoint.
+    min_role = (
+        "viewer"
+        if request.method in ("GET", "HEAD")
+        or request.endpoint == "payroll.payroll_assistant"
+        else "editor"
+    )
 
     refs: list[tuple[str, int]] = []
     invalid: list[str] = []
     for key, value in (request.view_args or {}).items():
-        table = FIELD_TO_TABLE.get(key)
+        table = _table_for_field(key)
         if table is not None:
             record_id = normalize_id(value)
             if record_id is None:
                 invalid.append(key)
             else:
                 refs.append((table, record_id))
-    for key, table in FIELD_TO_TABLE.items():
+    for key in _mapped_fields():
         raw = request.args.get(key)
         if raw is not None:
             record_id = normalize_id(raw)
             if record_id is None:
                 invalid.append(key)
             else:
-                refs.append((table, record_id))
+                refs.append((_table_for_field(key), record_id))
     if request.is_json:
         _collect_body_refs(request.get_json(silent=True), refs, invalid)
 

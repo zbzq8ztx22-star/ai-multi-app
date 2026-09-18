@@ -15,6 +15,7 @@ DEFAULT_DB_PATH = Path(__file__).resolve().parent.parent / "data" / "payroll.db"
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS employees (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
+    business_id INTEGER NOT NULL,
     name TEXT NOT NULL,
     position TEXT,
     pay_type TEXT NOT NULL CHECK(pay_type IN ('hourly', 'salary')),
@@ -28,16 +29,19 @@ CREATE TABLE IF NOT EXISTS employees (
     w4_deductions REAL NOT NULL DEFAULT 0 CHECK(w4_deductions >= 0),
     multiple_jobs INTEGER NOT NULL DEFAULT 0 CHECK(multiple_jobs IN (0, 1)),
     created_at TEXT NOT NULL,
-    updated_at TEXT NOT NULL
+    updated_at TEXT NOT NULL,
+    FOREIGN KEY (business_id) REFERENCES businesses(id) ON DELETE CASCADE
 );
 
 CREATE TABLE IF NOT EXISTS pay_periods (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
+    business_id INTEGER NOT NULL,
     start_date TEXT NOT NULL,
     end_date TEXT NOT NULL,
     pay_date TEXT,
     status TEXT NOT NULL DEFAULT 'open' CHECK(status IN ('open', 'closed')),
-    created_at TEXT NOT NULL
+    created_at TEXT NOT NULL,
+    FOREIGN KEY (business_id) REFERENCES businesses(id) ON DELETE CASCADE
 );
 
 CREATE TABLE IF NOT EXISTS payslips (
@@ -740,25 +744,34 @@ def run_migrations(conn: sqlite3.Connection) -> list[int]:
 
     Returns the versions applied during this call. Never removes data; a
     failed migration rolls back and re-raises so init_db fails loudly.
+
+    Foreign keys are disabled while migrations run: the pragma can only be
+    changed outside a transaction, and table rebuilds (dropping a parent
+    table children still reference) require enforcement to be off.
     """
     applied = applied_versions(conn)
     ran: list[int] = []
-    for migration in MIGRATIONS:
-        if migration.version in applied:
-            continue
-        conn.execute("BEGIN")
-        try:
-            migration.apply(conn)
-            conn.execute(
-                f"INSERT INTO {MIGRATIONS_TABLE} (version, name, applied_at)"
-                " VALUES (?, ?, ?)",
-                (migration.version, migration.name, now_utc()),
-            )
-            conn.execute("COMMIT")
-        except Exception:
-            conn.execute("ROLLBACK")
-            raise
-        ran.append(migration.version)
+    conn.commit()
+    conn.execute("PRAGMA foreign_keys = OFF")
+    try:
+        for migration in MIGRATIONS:
+            if migration.version in applied:
+                continue
+            conn.execute("BEGIN")
+            try:
+                migration.apply(conn)
+                conn.execute(
+                    f"INSERT INTO {MIGRATIONS_TABLE} (version, name, applied_at)"
+                    " VALUES (?, ?, ?)",
+                    (migration.version, migration.name, now_utc()),
+                )
+                conn.execute("COMMIT")
+            except Exception:
+                conn.execute("ROLLBACK")
+                raise
+            ran.append(migration.version)
+    finally:
+        conn.execute("PRAGMA foreign_keys = ON")
     return ran
 
 

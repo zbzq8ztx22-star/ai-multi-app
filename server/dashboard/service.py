@@ -25,14 +25,19 @@ def overview(user_id: int | None = None) -> dict[str, Any]:
         if allowed_ids:
             marks = ",".join("?" * len(allowed_ids))
             scope = f"business_id IN ({marks})"
+            employee_scope = f"employees.business_id IN ({marks})"
             scope_args: tuple[Any, ...] = tuple(allowed_ids)
         else:
             scope = "1 = 0"
+            employee_scope = "1 = 0"
             scope_args = ()
 
-        employees = conn.execute("SELECT COUNT(*) AS n FROM employees").fetchone()["n"]
-        pay_periods = conn.execute("SELECT COUNT(*) AS n FROM pay_periods").fetchone()["n"]
-        payslips = conn.execute("SELECT COUNT(*) AS n FROM payslips").fetchone()["n"]
+        employees = conn.execute(f"SELECT COUNT(*) AS n FROM employees WHERE {scope}", scope_args).fetchone()["n"]
+        pay_periods = conn.execute(f"SELECT COUNT(*) AS n FROM pay_periods WHERE {scope}", scope_args).fetchone()["n"]
+        payslips = conn.execute(
+            f"SELECT COUNT(*) AS n FROM payslips"
+            f" JOIN employees ON employees.id = payslips.employee_id"
+            f" WHERE {employee_scope}", scope_args).fetchone()["n"]
         taxpayers = conn.execute("SELECT COUNT(*) AS n FROM taxpayers").fetchone()["n"]
         tax_returns = conn.execute("SELECT COUNT(*) AS n FROM tax_returns").fetchone()["n"]
         businesses = len(allowed_ids)
@@ -44,10 +49,11 @@ def overview(user_id: int | None = None) -> dict[str, Any]:
         expenses = conn.execute(f"SELECT COUNT(*) AS n FROM expenses WHERE {scope}", scope_args).fetchone()["n"]
 
         recent_payslips = [row_to_dict(row) for row in conn.execute(
-            """SELECT payslips.id, payslips.created_at, payslips.gross_pay, payslips.net_pay,
+            f"""SELECT payslips.id, payslips.created_at, payslips.gross_pay, payslips.net_pay,
                employees.name AS employee_name
                FROM payslips JOIN employees ON employees.id = payslips.employee_id
-               ORDER BY payslips.created_at DESC LIMIT 5""").fetchall()]
+               WHERE {employee_scope}
+               ORDER BY payslips.created_at DESC LIMIT 5""", scope_args).fetchall()]
 
         recent_entries = [row_to_dict(row) for row in conn.execute(
             f"""SELECT journal_entries.id, journal_entries.entry_date, journal_entries.description,

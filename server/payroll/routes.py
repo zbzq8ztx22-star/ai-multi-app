@@ -4,7 +4,9 @@ import csv
 import io
 from typing import Any
 
-from flask import Blueprint, Response, jsonify, request, session
+from flask import Blueprint, Response, jsonify, request
+
+from access import tenant_guard
 
 from . import assistant, service
 
@@ -19,18 +21,14 @@ def _require_login() -> Any:
         return None
     from auth import login_required
 
-    result = login_required(lambda: None)()
-    if result is not None:
-        return result
-    # Viewers are read-only; admins may mutate. The assistant accepts POSTs
-    # from viewers because it only reads payroll data.
-    if (
-        request.method not in ("GET", "HEAD", "OPTIONS")
-        and request.endpoint != "payroll.payroll_assistant"
-        and session.get("role") != "admin"
-    ):
-        return jsonify({"error": "Forbidden"}), 403
-    return None
+    return login_required(lambda: None)()
+
+
+bp.before_request(tenant_guard)
+
+
+def _business_arg() -> int | None:
+    return request.args.get("business_id", type=int)
 
 
 def _get_json_body() -> dict[str, Any] | None:
@@ -50,7 +48,10 @@ def _json_error(message: str, status: int = 400):
 @bp.route("/employees", methods=["GET", "POST"])
 def employees():
     if request.method == "GET":
-        return jsonify(service.list_employees())
+        business_id = _business_arg()
+        if business_id is None:
+            return _json_error("business_id is required")
+        return jsonify(service.list_employees(business_id))
 
     body = _get_json_body()
     if not isinstance(body, dict):
@@ -90,7 +91,10 @@ def employee(employee_id: int):
 @bp.route("/pay-periods", methods=["GET", "POST"])
 def pay_periods():
     if request.method == "GET":
-        return jsonify(service.list_pay_periods())
+        business_id = _business_arg()
+        if business_id is None:
+            return _json_error("business_id is required")
+        return jsonify(service.list_pay_periods(business_id))
 
     body = _get_json_body()
     if not isinstance(body, dict):
@@ -130,9 +134,12 @@ def pay_period(period_id: int):
 @bp.route("/payslips", methods=["GET", "POST"])
 def payslips():
     if request.method == "GET":
+        business_id = _business_arg()
+        if business_id is None:
+            return _json_error("business_id is required")
         employee_id = request.args.get("employee_id", type=int)
         period_id = request.args.get("period_id", type=int)
-        return jsonify(service.list_payslips(employee_id=employee_id, period_id=period_id))
+        return jsonify(service.list_payslips(business_id, employee_id=employee_id, period_id=period_id))
 
     body = _get_json_body()
     if not isinstance(body, dict):
@@ -187,7 +194,11 @@ def payroll_assistant():
     if not isinstance(committee_review, bool):
         return _json_error("committee_review must be a boolean")
 
-    result = assistant.ask(message.strip(), session_id, committee_review)
+    business_id = body.get("business_id")
+    if not isinstance(business_id, int) or isinstance(business_id, bool):
+        return _json_error("business_id is required and must be an integer")
+
+    result = assistant.ask(message.strip(), business_id, session_id, committee_review)
     if "error" in result:
         return _json_error(result["error"], 502)
     return jsonify(result)
