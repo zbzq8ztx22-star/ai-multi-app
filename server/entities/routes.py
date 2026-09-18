@@ -5,10 +5,18 @@ from typing import Any
 from flask import Blueprint, jsonify, request, session
 
 from auth import admin_required, login_required
-from access import BUSINESS_ROLES, grant_access, list_grants, require_business_access, revoke_access
+from access import (
+    BUSINESS_ROLES,
+    grant_access,
+    list_grants,
+    require_business_access,
+    revoke_access,
+    tenant_guard,
+)
 from . import service
 
 bp = Blueprint("entities", __name__, url_prefix="/api/entities")
+bp.before_request(tenant_guard)
 
 
 def _body() -> dict[str, Any] | None:

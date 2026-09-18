@@ -583,7 +583,7 @@ def test_every_direct_id_route_denies_foreign_records(app, method, path):
 
 TENANT_BLUEPRINTS = {
     "accounting", "inventory", "cost_centers", "currency", "dashboard",
-    "tax", "backup",
+    "tax", "backup", "payroll", "entities",
 }
 
 # Route params that reference rows outside the tenant model: access grants
@@ -826,3 +826,48 @@ def test_cannot_delete_sole_business_owner(app):
     )
     assert response.status_code == 201
     assert admin.delete("/api/auth/users/2").status_code == 200
+
+
+def test_taxpayer_cannot_link_employee_from_foreign_business(app):
+    """A global admin with no grant on B cannot attach B's employee to a
+    taxpayer: the entities guard resolves employee_id to its business."""
+    admin = app.test_client()
+    _register(admin, "root", role="admin")
+    business_a = _make_business(admin, "Alpha LLC")
+
+    client_b = app.test_client()
+    _register(client_b, "bob")
+    business_b = _make_business(client_b, "Beta LLC")
+    employee_b = _make_employee(client_b, business_b["id"], "Bob's Worker")
+
+    payload = {"legal_name": "Evil Link", "employee_id": employee_b["id"]}
+    resp = admin.post("/api/entities/taxpayers", json=payload)
+    assert resp.status_code == 404
+    # String-encoded foreign ids are rejected the same way.
+    resp = admin.post(
+        "/api/entities/taxpayers",
+        json={"legal_name": "Evil Link", "employee_id": str(employee_b["id"])},
+    )
+    assert resp.status_code == 404
+
+    # No taxpayer was created by either rejected request.
+    taxpayers = admin.get("/api/entities/taxpayers").get_json()
+    assert taxpayers == []
+
+
+def test_taxpayer_links_employee_within_accessible_business(app):
+    admin = app.test_client()
+    _register(admin, "root", role="admin")
+    business_a = _make_business(admin, "Alpha LLC")
+    employee_a = _make_employee(admin, business_a["id"], "Alice's Worker")
+
+    resp = admin.post(
+        "/api/entities/taxpayers",
+        json={"legal_name": "Good Link", "employee_id": employee_a["id"]},
+    )
+    assert resp.status_code == 201
+    assert resp.get_json()["employee_id"] == employee_a["id"]
+
+    # Taxpayers without an employee link are unaffected by the guard.
+    resp = admin.post("/api/entities/taxpayers", json={"legal_name": "No Link"})
+    assert resp.status_code == 201

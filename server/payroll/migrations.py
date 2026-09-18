@@ -266,6 +266,16 @@ def _m009_payroll_business_scope(conn: sqlite3.Connection) -> None:
         if len(row) == 1:
             business_id = row[0]["id"]
         else:
+            admins = conn.execute(
+                "SELECT id FROM users WHERE role = 'admin'"
+            ).fetchall()
+            if not admins:
+                raise RuntimeError(
+                    "Cannot migrate unscoped payroll rows: the database has"
+                    " legacy payroll data but no admin user to own the"
+                    " 'Migrated Payroll' business. Register a global admin"
+                    " account and restart so migration 9 can finish."
+                )
             now = datetime.now(timezone.utc).isoformat()
             cursor = conn.execute(
                 "INSERT INTO businesses"

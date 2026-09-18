@@ -8,6 +8,7 @@ import re
 import sqlite3
 from pathlib import Path
 
+import pytest
 from flask import Flask
 
 from payroll.db import SCHEMA, init_db
@@ -249,6 +250,7 @@ def _seed_old_accounting(db_path: Path) -> None:
 def test_upgrade_oldest_payroll_schema_preserves_data(tmp_path):
     db_path = tmp_path / "old.db"
     _seed_old_payroll(db_path)
+    _seed_businesses(db_path, ["Acme LLC"])
 
     _run_init(db_path)
     conn = _connect(db_path)
@@ -268,6 +270,7 @@ def test_upgrade_oldest_payroll_schema_preserves_data(tmp_path):
 def test_upgrade_adds_every_current_table_and_column(tmp_path):
     db_path = tmp_path / "old.db"
     _seed_old_payroll(db_path)
+    _seed_businesses(db_path, ["Acme LLC"])
     _run_init(db_path)
     conn = _connect(db_path)
 
@@ -323,6 +326,7 @@ def test_upgrade_adds_1099_and_group_columns(tmp_path):
 def test_migrations_recorded_and_idempotent(tmp_path):
     db_path = tmp_path / "old.db"
     _seed_old_payroll(db_path)
+    _seed_businesses(db_path, ["Acme LLC"])
 
     _run_init(db_path)
     conn = _connect(db_path)
@@ -492,6 +496,70 @@ def test_migration_9_creates_migrated_business_when_ambiguous(tmp_path):
         "SELECT COUNT(*) FROM employees WHERE business_id != ?",
         (migrated["id"],),
     ).fetchone()[0] == 0
+
+
+def test_migration_9_fails_closed_without_admin(tmp_path):
+    """Ambiguous legacy payroll with zero admin users: the migration aborts
+    loudly instead of creating an ownerless 'Migrated Payroll' business."""
+    db_path = tmp_path / "old.db"
+    _seed_old_payroll(db_path)
+    _seed_businesses(db_path, ["Acme LLC", "Other Corp"])
+    conn = _connect(db_path)
+    conn.execute(
+        """CREATE TABLE users (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    username TEXT NOT NULL UNIQUE,
+    password_hash TEXT NOT NULL,
+    role TEXT NOT NULL DEFAULT 'viewer' CHECK(role IN ('admin', 'viewer')),
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+)"""
+    )
+    conn.execute(
+        "INSERT INTO users (username, password_hash, role, created_at,"
+        " updated_at) VALUES ('clerk', 'x', 'viewer', '2026-01-01', '2026-01-01')"
+    )
+    conn.commit()
+    conn.close()
+
+    with pytest.raises(RuntimeError, match="no admin user"):
+        _run_init(db_path)
+
+    conn = _connect(db_path)
+    # The transaction rolled back: no Migrated Payroll business exists.
+    assert conn.execute(
+        "SELECT COUNT(*) FROM businesses WHERE legal_name = 'Migrated Payroll'"
+    ).fetchone()[0] == 0
+    assert conn.execute("SELECT COUNT(*) FROM businesses").fetchone()[0] == 2
+    # Original payroll rows survived untouched and still unscoped.
+    assert conn.execute("SELECT COUNT(*) FROM employees").fetchone()[0] == 1
+    assert conn.execute("SELECT COUNT(*) FROM pay_periods").fetchone()[0] == 1
+    assert conn.execute("SELECT COUNT(*) FROM payslips").fetchone()[0] == 1
+    assert "business_id" not in _table_columns(conn, "employees")
+    assert "business_id" not in _table_columns(conn, "pay_periods")
+    # Version 9 was not recorded as applied.
+    versions = {
+        row["version"]
+        for row in conn.execute(f"SELECT version FROM {MIGRATIONS_TABLE}")
+    }
+    assert 9 not in versions
+
+    # Once an admin exists, the same database upgrades cleanly.
+    conn.execute(
+        "INSERT INTO users (username, password_hash, role, created_at,"
+        " updated_at) VALUES ('boss', 'x', 'admin', '2026-01-01', '2026-01-01')"
+    )
+    conn.commit()
+    conn.close()
+    _run_init(db_path)
+    conn = _connect(db_path)
+    migrated = conn.execute(
+        "SELECT id FROM businesses WHERE legal_name = 'Migrated Payroll'"
+    ).fetchone()
+    assert migrated is not None
+    assert conn.execute("SELECT business_id FROM employees").fetchone()[
+        "business_id"
+    ] == migrated["id"]
 
 
 def test_migration_9_is_idempotent(tmp_path):

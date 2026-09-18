@@ -49,19 +49,33 @@ const EMPTY_DEDUCTION = {
 
 const SESSION_ID_KEY = 'payroll_assistant_session_id'
 
-function getOrCreateSessionId() {
-  let id = sessionStorage.getItem(SESSION_ID_KEY)
+function sessionKey(businessId) {
+  return `${SESSION_ID_KEY}_${businessId}`
+}
+
+function newSessionId() {
+  return crypto.randomUUID
+    ? crypto.randomUUID()
+    : Array.from(crypto.getRandomValues(new Uint8Array(16)), byte => byte.toString(16).padStart(2, '0')).join('')
+}
+
+function getOrCreateSessionId(businessId) {
+  const key = sessionKey(businessId)
+  let id = sessionStorage.getItem(key)
   if (!id) {
-    id = crypto.randomUUID
-      ? crypto.randomUUID()
-      : Array.from(crypto.getRandomValues(new Uint8Array(16)), byte => byte.toString(16).padStart(2, '0')).join('')
-    sessionStorage.setItem(SESSION_ID_KEY, id)
+    id = newSessionId()
+    sessionStorage.setItem(key, id)
   }
   return id
 }
 
-function saveSessionId(id) {
-  if (id) sessionStorage.setItem(SESSION_ID_KEY, id)
+function saveSessionId(businessId, id) {
+  if (id) sessionStorage.setItem(sessionKey(businessId), id)
+}
+
+const INITIAL_ASSISTANT_MESSAGE = {
+  role: 'assistant',
+  content: 'Hi! I can help with payroll questions, list employees, or explain a payslip.',
 }
 
 function formatCurrency(value) {
@@ -84,12 +98,10 @@ export default function Payroll() {
   const [periodForm, setPeriodForm] = useState(EMPTY_PERIOD)
   const [payslipForm, setPayslipForm] = useState(EMPTY_PAYSLIP)
 
-  const [assistantMessages, setAssistantMessages] = useState([
-    { role: 'assistant', content: 'Hi! I can help with payroll questions, list employees, or explain a payslip.' }
-  ])
+  const [assistantMessages, setAssistantMessages] = useState([INITIAL_ASSISTANT_MESSAGE])
   const [assistantInput, setAssistantInput] = useState('')
   const [assistantLoading, setAssistantLoading] = useState(false)
-  const [assistantSessionId, setAssistantSessionId] = useState(() => getOrCreateSessionId())
+  const [assistantSessionId, setAssistantSessionId] = useState('')
 
   const [reportPeriodId, setReportPeriodId] = useState('')
   const [report, setReport] = useState(null)
@@ -98,15 +110,26 @@ export default function Payroll() {
   const [selectedPayslip, setSelectedPayslip] = useState(null)
 
   const messagesEndRef = useRef(null)
+  const requestSeqRef = useRef(0)
+  const businessIdRef = useRef('')
 
   const loadBusinesses = async () => {
     const data = await apiGet('/api/entities/businesses')
     setBusinesses(data)
-    if (!businessId && data.length) setBusinessId(String(data[0].id))
+    if (!businessIdRef.current && data.length) handleBusinessChange(String(data[0].id))
+  }
+
+  const handleBusinessChange = (id) => {
+    businessIdRef.current = id
+    setBusinessId(id)
   }
 
   const refreshData = async (id = businessId) => {
-    if (!id) { setEmployees([]); setPeriods([]); setPayslips([]); return }
+    // Monotonic request id: a slower response for a previous business must
+    // never overwrite the state of the business now selected.
+    const seq = ++requestSeqRef.current
+    const isCurrent = () => seq === requestSeqRef.current && id === businessIdRef.current
+    if (!id) { setEmployees([]); setPeriods([]); setPayslips([]); setLoading(false); return }
     setLoading(true)
     setError('')
     try {
@@ -115,13 +138,14 @@ export default function Payroll() {
         apiGet(`/api/payroll/pay-periods?business_id=${id}`),
         apiGet(`/api/payroll/payslips?business_id=${id}`),
       ])
+      if (!isCurrent()) return
       setEmployees(emps)
       setPeriods(pers)
       setPayslips(slips)
     } catch (err) {
-      setError(err?.message || 'Failed to load payroll data.')
+      if (isCurrent()) setError(err?.message || 'Failed to load payroll data.')
     } finally {
-      setLoading(false)
+      if (isCurrent()) setLoading(false)
     }
   }
 
@@ -130,6 +154,24 @@ export default function Payroll() {
   }, [])
 
   useEffect(() => {
+    businessIdRef.current = businessId
+    // Clear every piece of tenant-scoped state so nothing from the previous
+    // business can show (or be acted on) under the new selection.
+    setEmployees([])
+    setPeriods([])
+    setPayslips([])
+    setSelectedPayslip(null)
+    setReport(null)
+    setReportPeriodId('')
+    setReportLoading(false)
+    setEmployeeForm(EMPTY_EMPLOYEE)
+    setPeriodForm(EMPTY_PERIOD)
+    setPayslipForm(EMPTY_PAYSLIP)
+    setAssistantMessages([INITIAL_ASSISTANT_MESSAGE])
+    setAssistantInput('')
+    setAssistantLoading(false)
+    setAssistantSessionId(businessId ? getOrCreateSessionId(businessId) : '')
+    setError('')
     refreshData(businessId)
   }, [businessId])
 
@@ -156,7 +198,7 @@ export default function Payroll() {
     try {
       await apiPost('/api/payroll/employees', {
         ...employeeForm,
-        business_id: businessId,
+        business_id: Number(businessId),
         rate: parseFloat(employeeForm.rate),
         federal_withholding: parseFloat(employeeForm.federal_withholding || 0),
         dependents: parseInt(employeeForm.dependents || 0, 10),
@@ -185,7 +227,7 @@ export default function Payroll() {
   const handleCreatePeriod = async (e) => {
     e.preventDefault()
     clearError()
-    const payload = { ...periodForm, business_id: businessId }
+    const payload = { ...periodForm, business_id: Number(businessId) }
     if (!payload.pay_date) delete payload.pay_date
     try {
       await apiPost('/api/payroll/pay-periods', payload)
@@ -263,24 +305,27 @@ export default function Payroll() {
 
   const handleLoadReport = async (e) => {
     e.preventDefault()
-    if (!reportPeriodId) return
+    const bid = businessId
+    if (!reportPeriodId || !bid) return
     setReportLoading(true)
     clearError()
     setReport(null)
     try {
       const data = await apiGet(`/api/payroll/reports/${reportPeriodId}`)
+      if (businessIdRef.current !== bid) return
       setReport(data)
     } catch (err) {
-      showError(err?.message || 'Failed to load report.')
+      if (businessIdRef.current === bid) showError(err?.message || 'Failed to load report.')
     } finally {
-      setReportLoading(false)
+      if (businessIdRef.current === bid) setReportLoading(false)
     }
   }
 
   const handleAssistantSubmit = async (e) => {
     e.preventDefault()
     const trimmed = assistantInput.trim()
-    if (!trimmed || assistantLoading) return
+    const bid = businessId
+    if (!trimmed || assistantLoading || !bid) return
 
     setAssistantMessages(prev => [...prev, { role: 'user', content: trimmed }])
     setAssistantInput('')
@@ -290,19 +335,24 @@ export default function Payroll() {
     try {
       const data = await apiPost('/api/payroll/assistant', {
         message: trimmed,
-        business_id: businessId,
+        business_id: Number(bid),
         session_id: assistantSessionId,
       })
+      // Discard the reply if the user switched business while waiting: the
+      // conversation (and its OpenExecutive session) belongs to `bid`.
+      if (businessIdRef.current !== bid) return
       if (data.session_id) {
         setAssistantSessionId(data.session_id)
-        saveSessionId(data.session_id)
+        saveSessionId(bid, data.session_id)
       }
       const reply = typeof data.response === 'string' ? data.response : ''
       setAssistantMessages(prev => [...prev, { role: 'assistant', content: reply || 'No response received.' }])
     } catch (err) {
-      setAssistantMessages(prev => [...prev, { role: 'assistant', content: err?.message || 'Sorry, the assistant failed to respond.' }])
+      if (businessIdRef.current === bid) {
+        setAssistantMessages(prev => [...prev, { role: 'assistant', content: err?.message || 'Sorry, the assistant failed to respond.' }])
+      }
     } finally {
-      setAssistantLoading(false)
+      if (businessIdRef.current === bid) setAssistantLoading(false)
     }
   }
 
@@ -958,7 +1008,7 @@ export default function Payroll() {
             <select
               className="input-field text-sm"
               value={businessId}
-              onChange={e => setBusinessId(e.target.value)}
+              onChange={e => handleBusinessChange(e.target.value)}
               aria-label="Active business"
             >
               <option value="">Select a business</option>
