@@ -340,6 +340,61 @@ def test_migrations_recorded_and_idempotent(tmp_path):
     assert conn.execute("SELECT COUNT(*) FROM employees").fetchone()[0] == 1
 
 
+def test_migration_8_backfill_is_fail_closed(tmp_path):
+    """Existing admins keep administrative ownership; other users get nothing."""
+    db_path = tmp_path / "old.db"
+    _seed_old_accounting(db_path)
+    conn = _connect(db_path)
+    conn.execute(
+        """CREATE TABLE users (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    username TEXT NOT NULL UNIQUE,
+    password_hash TEXT NOT NULL,
+    role TEXT NOT NULL DEFAULT 'viewer' CHECK(role IN ('admin', 'viewer')),
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+)"""
+    )
+    conn.execute(
+        "INSERT INTO users (username, password_hash, role, created_at,"
+        " updated_at) VALUES ('boss', 'x', 'admin', '2026-01-01', '2026-01-01')"
+    )
+    conn.execute(
+        "INSERT INTO users (username, password_hash, role, created_at,"
+        " updated_at) VALUES ('clerk', 'x', 'viewer', '2026-01-01', '2026-01-01')"
+    )
+    conn.commit()
+    conn.close()
+
+    _run_init(db_path)
+    conn = _connect(db_path)
+
+    grants = conn.execute(
+        "SELECT user_id, business_id, role FROM user_business_access"
+        " ORDER BY user_id"
+    ).fetchall()
+    # The admin becomes owner of the existing business so administration
+    # survives the upgrade...
+    assert [
+        (row["user_id"], row["business_id"], row["role"]) for row in grants
+    ] == [(1, 1, "owner")]
+    # ...but the non-admin user is not granted access to any business.
+    assert all(row["user_id"] != 2 for row in grants)
+
+    # Business data itself is preserved.
+    assert conn.execute("SELECT COUNT(*) FROM businesses").fetchone()[0] == 1
+    assert conn.execute("SELECT COUNT(*) FROM accounts").fetchone()[0] == 2
+    conn.close()
+
+    # Re-running migrations neither duplicates nor widens the grants.
+    _run_init(db_path)
+    conn = _connect(db_path)
+    assert (
+        conn.execute("SELECT COUNT(*) FROM user_business_access").fetchone()[0]
+        == 1
+    )
+
+
 def test_fresh_install_ends_at_latest_version(tmp_path):
     db_path = tmp_path / "fresh.db"
     _run_init(db_path)

@@ -3,9 +3,11 @@ from typing import Any
 from flask import Blueprint, jsonify, request
 
 from auth import admin_required, login_required
+from access import tenant_guard
 from . import service
 
 bp = Blueprint("tax", __name__, url_prefix="/api/tax")
+bp.before_request(tenant_guard)
 
 
 @bp.route("/returns", methods=["GET"])
@@ -53,7 +55,7 @@ def tax_payments() -> Any:
 
 
 @bp.route("/payments", methods=["POST"])
-@admin_required
+@login_required
 def create_tax_payment() -> Any:
     data = request.get_json(silent=True)
     if not isinstance(data, dict):
@@ -65,7 +67,7 @@ def create_tax_payment() -> Any:
 
 
 @bp.route("/payments/<int:payment_id>", methods=["DELETE"])
-@admin_required
+@login_required
 def delete_tax_payment(payment_id: int) -> Any:
     try:
         service.delete_tax_payment(payment_id)

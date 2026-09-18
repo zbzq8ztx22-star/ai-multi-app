@@ -2,10 +2,12 @@ from typing import Any
 
 from flask import Blueprint, jsonify, request
 
-from auth import admin_required, login_required
+from auth import login_required
+from access import tenant_guard
 from . import service
 
 bp = Blueprint("inventory", __name__, url_prefix="/api/inventory")
+bp.before_request(tenant_guard)
 
 
 @bp.route("/items", methods=["GET"])
@@ -22,7 +24,7 @@ def items() -> Any:
 
 
 @bp.route("/items", methods=["POST"])
-@admin_required
+@login_required
 def create_item() -> Any:
     data = request.get_json(silent=True)
     if not isinstance(data, dict):
@@ -34,7 +36,7 @@ def create_item() -> Any:
 
 
 @bp.route("/items/<int:item_id>", methods=["PUT"])
-@admin_required
+@login_required
 def update_item(item_id: int) -> Any:
     data = request.get_json(silent=True)
     if not isinstance(data, dict):
@@ -46,7 +48,7 @@ def update_item(item_id: int) -> Any:
 
 
 @bp.route("/items/<int:item_id>", methods=["DELETE"])
-@admin_required
+@login_required
 def delete_item(item_id: int) -> Any:
     try:
         service.delete_item(item_id)
@@ -69,7 +71,7 @@ def movements() -> Any:
 
 
 @bp.route("/movements", methods=["POST"])
-@admin_required
+@login_required
 def record_movement() -> Any:
     data = request.get_json(silent=True)
     if not isinstance(data, dict):

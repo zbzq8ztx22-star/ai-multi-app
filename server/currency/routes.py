@@ -2,10 +2,12 @@ from typing import Any
 
 from flask import Blueprint, jsonify, request
 
-from auth import admin_required, login_required
+from auth import login_required
+from access import tenant_guard
 from . import service
 
 bp = Blueprint("currency", __name__, url_prefix="/api/currency")
+bp.before_request(tenant_guard)
 
 
 @bp.route("/currencies", methods=["GET"])
@@ -21,7 +23,7 @@ def currencies() -> Any:
 
 
 @bp.route("/currencies", methods=["POST"])
-@admin_required
+@login_required
 def create_currency() -> Any:
     data = request.get_json(silent=True)
     if not isinstance(data, dict):
@@ -45,7 +47,7 @@ def rates() -> Any:
 
 
 @bp.route("/rates", methods=["POST"])
-@admin_required
+@login_required
 def set_rate() -> Any:
     data = request.get_json(silent=True)
     if not isinstance(data, dict):
