@@ -27,10 +27,13 @@ export default function Tax() {
   const refresh = async () => {
     setLoading(true)
     try {
-      const [people, companies, staff, filings] = await Promise.all([
+      const [people, companies, filings] = await Promise.all([
         apiGet('/api/entities/taxpayers'), apiGet('/api/entities/businesses'),
-        apiGet('/api/payroll/employees'), apiGet('/api/tax/returns'),
+        apiGet('/api/tax/returns'),
       ])
+      const staff = (await Promise.all(
+        companies.map(b => apiGet(`/api/payroll/employees?business_id=${b.id}`))
+      )).flat()
       setTaxpayers(people); setBusinesses(companies); setEmployees(staff); setReturns(filings); setError('')
     } catch (err) { setError(err.message) } finally { setLoading(false) }
   }
@@ -75,7 +78,7 @@ export default function Tax() {
           <h2 className="text-lg font-semibold text-gray-900 flex items-center gap-2"><UserRound size={20} className="text-primary-600" /> New taxpayer</h2>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
             <input className="input-field" placeholder="Legal name" required value={personForm.legal_name} onChange={e => setPersonForm({ ...personForm, legal_name: e.target.value })} />
-            <select className="input-field" value={personForm.employee_id} onChange={e => setPersonForm({ ...personForm, employee_id: e.target.value })}><option value="">No payroll link</option>{employees.map(e => <option key={e.id} value={e.id}>{e.name}</option>)}</select>
+            <select className="input-field" value={personForm.employee_id} onChange={e => setPersonForm({ ...personForm, employee_id: e.target.value })}><option value="">No payroll link</option>{employees.map(e => <option key={e.id} value={e.id}>{e.name}{businesses.find(b => b.id === e.business_id) ? ` · ${businesses.find(b => b.id === e.business_id).legal_name}` : ''}</option>)}</select>
             <select className="input-field" value={personForm.filing_status} onChange={e => setPersonForm({ ...personForm, filing_status: e.target.value })}><option value="single">Single</option><option value="married_joint">Married filing jointly</option><option value="married_separate">Married filing separately</option><option value="hoh">Head of household</option><option value="widow">Qualifying surviving spouse</option></select>
             <input className="input-field" placeholder="Residence state" value={personForm.residence_state} onChange={e => setPersonForm({ ...personForm, residence_state: e.target.value })} />
             <input className="input-field" placeholder="SSN last 4 only" maxLength="4" value={personForm.identifier_last4} onChange={e => setPersonForm({ ...personForm, identifier_last4: e.target.value })} />

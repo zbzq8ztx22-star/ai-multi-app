@@ -72,6 +72,8 @@ function formatCurrency(value) {
 
 export default function Payroll() {
   const [activeSection, setActiveSection] = useState('employees')
+  const [businesses, setBusinesses] = useState([])
+  const [businessId, setBusinessId] = useState('')
   const [employees, setEmployees] = useState([])
   const [periods, setPeriods] = useState([])
   const [payslips, setPayslips] = useState([])
@@ -97,14 +99,21 @@ export default function Payroll() {
 
   const messagesEndRef = useRef(null)
 
-  const refreshData = async () => {
+  const loadBusinesses = async () => {
+    const data = await apiGet('/api/entities/businesses')
+    setBusinesses(data)
+    if (!businessId && data.length) setBusinessId(String(data[0].id))
+  }
+
+  const refreshData = async (id = businessId) => {
+    if (!id) { setEmployees([]); setPeriods([]); setPayslips([]); return }
     setLoading(true)
     setError('')
     try {
       const [emps, pers, slips] = await Promise.all([
-        apiGet('/api/payroll/employees'),
-        apiGet('/api/payroll/pay-periods'),
-        apiGet('/api/payroll/payslips'),
+        apiGet(`/api/payroll/employees?business_id=${id}`),
+        apiGet(`/api/payroll/pay-periods?business_id=${id}`),
+        apiGet(`/api/payroll/payslips?business_id=${id}`),
       ])
       setEmployees(emps)
       setPeriods(pers)
@@ -117,8 +126,12 @@ export default function Payroll() {
   }
 
   useEffect(() => {
-    refreshData()
+    loadBusinesses().catch(err => setError(err?.message || 'Failed to load businesses.'))
   }, [])
+
+  useEffect(() => {
+    refreshData(businessId)
+  }, [businessId])
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
@@ -143,6 +156,7 @@ export default function Payroll() {
     try {
       await apiPost('/api/payroll/employees', {
         ...employeeForm,
+        business_id: businessId,
         rate: parseFloat(employeeForm.rate),
         federal_withholding: parseFloat(employeeForm.federal_withholding || 0),
         dependents: parseInt(employeeForm.dependents || 0, 10),
@@ -171,7 +185,7 @@ export default function Payroll() {
   const handleCreatePeriod = async (e) => {
     e.preventDefault()
     clearError()
-    const payload = { ...periodForm }
+    const payload = { ...periodForm, business_id: businessId }
     if (!payload.pay_date) delete payload.pay_date
     try {
       await apiPost('/api/payroll/pay-periods', payload)
@@ -276,6 +290,7 @@ export default function Payroll() {
     try {
       const data = await apiPost('/api/payroll/assistant', {
         message: trimmed,
+        business_id: businessId,
         session_id: assistantSessionId,
       })
       if (data.session_id) {
@@ -939,16 +954,29 @@ export default function Payroll() {
               {activeSection === 'assistant' && 'Ask the payroll assistant about your data.'}
             </p>
           </div>
-          <button
-            onClick={refreshData}
-            disabled={loading}
-            className="btn-secondary flex items-center gap-2 text-sm"
-            aria-label="Refresh payroll data"
-            title="Refresh"
-          >
-            <RefreshCw size={16} className={loading ? 'animate-spin' : ''} aria-hidden="true" />
-            Refresh
-          </button>
+          <div className="flex items-center gap-3">
+            <select
+              className="input-field text-sm"
+              value={businessId}
+              onChange={e => setBusinessId(e.target.value)}
+              aria-label="Active business"
+            >
+              <option value="">Select a business</option>
+              {businesses.map(b => (
+                <option key={b.id} value={b.id}>{b.legal_name}</option>
+              ))}
+            </select>
+            <button
+              onClick={() => refreshData()}
+              disabled={loading}
+              className="btn-secondary flex items-center gap-2 text-sm"
+              aria-label="Refresh payroll data"
+              title="Refresh"
+            >
+              <RefreshCw size={16} className={loading ? 'animate-spin' : ''} aria-hidden="true" />
+              Refresh
+            </button>
+          </div>
         </div>
 
         {error && (
@@ -958,7 +986,13 @@ export default function Payroll() {
         )}
 
         <div className="flex-1 overflow-y-auto p-6">
-          {renderActiveSection()}
+          {businessId ? renderActiveSection() : (
+            <p className="text-gray-500">
+              {businesses.length === 0
+                ? 'No businesses yet. Create one in the Accounting tab first.'
+                : 'Select a business to manage its payroll.'}
+            </p>
+          )}
         </div>
       </main>
 

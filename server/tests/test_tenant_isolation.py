@@ -672,6 +672,140 @@ def test_owner_downgrade_allowed_when_another_owner_remains(app):
     ).status_code == 400
 
 
+def _make_employee(client, business_id, name="Worker"):
+    return _create(client, "/api/payroll/employees", {
+        "business_id": business_id, "name": name,
+        "pay_type": "hourly", "rate": 20.0,
+    })
+
+
+def _make_pay_period(client, business_id):
+    return _create(client, "/api/payroll/pay-periods", {
+        "business_id": business_id,
+        "start_date": "2026-01-01", "end_date": "2026-01-15",
+    })
+
+
+def _make_payslip(client, employee_id, period_id):
+    return _create(client, "/api/payroll/payslips", {
+        "employee_id": employee_id, "period_id": period_id,
+        "regular_hours": 40,
+    })
+
+
+def test_payroll_lists_are_scoped_to_own_business(app):
+    client_a, business_a, client_b, business_b = _two_tenants(app)
+    _make_employee(client_b, business_b["id"], "Bob's Worker")
+    _make_pay_period(client_b, business_b["id"])
+
+    # Alice cannot list or count Bob's payroll data.
+    assert client_a.get(
+        f"/api/payroll/employees?business_id={business_b['id']}"
+    ).status_code == 404
+    assert client_a.get(
+        f"/api/payroll/pay-periods?business_id={business_b['id']}"
+    ).status_code == 404
+    assert client_a.get(
+        f"/api/payroll/payslips?business_id={business_b['id']}"
+    ).status_code == 404
+
+    # Bob sees his own data only.
+    employees = client_b.get(
+        f"/api/payroll/employees?business_id={business_b['id']}"
+    ).get_json()
+    assert [e["name"] for e in employees] == ["Bob's Worker"]
+
+
+def test_payroll_records_resolve_to_owning_business(app):
+    client_a, business_a, client_b, business_b = _two_tenants(app)
+    employee = _make_employee(client_b, business_b["id"])
+    period = _make_pay_period(client_b, business_b["id"])
+    payslip = _make_payslip(client_b, employee["id"], period["id"])
+
+    # Direct-id endpoints answer 404 for the foreign tenant.
+    for url in (
+        f"/api/payroll/employees/{employee['id']}",
+        f"/api/payroll/pay-periods/{period['id']}",
+        f"/api/payroll/payslips/{payslip['id']}",
+        f"/api/payroll/reports/{period['id']}",
+        f"/api/payroll/reports/{period['id']}/csv",
+    ):
+        assert client_a.get(url).status_code == 404, url
+
+    # Writes on foreign records are rejected the same way.
+    assert client_a.delete(
+        f"/api/payroll/employees/{employee['id']}"
+    ).status_code == 404
+    assert client_a.put(
+        f"/api/payroll/pay-periods/{period['id']}",
+        json={"start_date": "2026-02-01", "end_date": "2026-02-15"},
+    ).status_code == 404
+    # Nothing was deleted.
+    assert client_b.get(
+        f"/api/payroll/employees/{employee['id']}"
+    ).status_code == 200
+
+
+def test_payroll_rejects_cross_business_and_string_ids(app):
+    client_a, business_a, client_b, business_b = _two_tenants(app)
+    employee_b = _make_employee(client_b, business_b["id"])
+    period_b = _make_pay_period(client_b, business_b["id"])
+    employee_a = _make_employee(client_a, business_a["id"])
+    period_a = _make_pay_period(client_a, business_a["id"])
+
+    # String-encoded foreign ids hit the same guard.
+    assert client_a.get(
+        f"/api/payroll/employees?business_id={business_b['id']}&employee_id={employee_b['id']}"
+    ).status_code == 404
+    resp = client_a.post(
+        "/api/payroll/payslips",
+        json={"employee_id": str(employee_b["id"]), "period_id": period_a["id"]},
+    )
+    assert resp.status_code == 404
+
+    # Alice cannot create payroll rows inside Bob's business.
+    assert client_a.post(
+        "/api/payroll/employees",
+        json={"business_id": business_b["id"], "name": "Spy", "pay_type": "hourly", "rate": 10},
+    ).status_code == 404
+    assert client_a.post(
+        "/api/payroll/pay-periods",
+        json={"business_id": business_b["id"], "start_date": "2026-02-01", "end_date": "2026-02-15"},
+    ).status_code == 404
+
+    # Mixing businesses is impossible even with access to both: grant Alice
+    # editor on B, then a payslip pairing her employee with Bob's period
+    # fails the service-level consistency check.
+    client_b.post(
+        f"/api/entities/businesses/{business_b['id']}/access",
+        json={"user_id": 1, "role": "editor"},
+    )
+    resp = client_a.post(
+        "/api/payroll/payslips",
+        json={"employee_id": employee_a["id"], "period_id": period_b["id"]},
+    )
+    assert resp.status_code == 400
+
+
+def test_payroll_assistant_is_scoped_to_business(app):
+    client_a, business_a, client_b, business_b = _two_tenants(app)
+    _make_employee(client_b, business_b["id"], "Hidden Worker")
+
+    # The assistant only summarizes the requested business.
+    resp = client_b.post(
+        "/api/payroll/assistant",
+        json={"business_id": business_b["id"], "message": "list employees"},
+    )
+    assert resp.status_code == 200
+    assert "Hidden Worker" in resp.get_json()["response"]
+
+    resp = client_a.post(
+        "/api/payroll/assistant",
+        json={"business_id": business_b["id"], "message": "list employees"},
+    )
+    assert resp.status_code == 404
+
+
 def test_cannot_delete_sole_business_owner(app):
     admin = app.test_client()
     _register(admin, "root", role="admin")

@@ -191,6 +191,125 @@ def _m008_user_business_access(conn: sqlite3.Connection) -> None:
     )
 
 
+_EMPLOYEES_REBUILD = """CREATE TABLE employees_new (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    business_id INTEGER NOT NULL,
+    name TEXT NOT NULL,
+    position TEXT,
+    pay_type TEXT NOT NULL CHECK(pay_type IN ('hourly', 'salary')),
+    pay_frequency TEXT NOT NULL DEFAULT 'biweekly' CHECK(pay_frequency IN ('weekly', 'biweekly', 'semimonthly', 'monthly', 'annual')),
+    rate REAL NOT NULL CHECK(rate > 0),
+    state TEXT NOT NULL DEFAULT '',
+    filing_status TEXT NOT NULL DEFAULT 'single' CHECK(filing_status IN ('single', 'married', 'hoh')),
+    federal_withholding REAL NOT NULL DEFAULT 0 CHECK(federal_withholding >= 0),
+    dependents INTEGER NOT NULL DEFAULT 0 CHECK(dependents >= 0),
+    other_income REAL NOT NULL DEFAULT 0 CHECK(other_income >= 0),
+    w4_deductions REAL NOT NULL DEFAULT 0 CHECK(w4_deductions >= 0),
+    multiple_jobs INTEGER NOT NULL DEFAULT 0 CHECK(multiple_jobs IN (0, 1)),
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    FOREIGN KEY (business_id) REFERENCES businesses(id) ON DELETE CASCADE
+)"""
+
+_EMPLOYEES_COLUMNS = (
+    "id, business_id, name, position, pay_type, pay_frequency, rate, state,"
+    " filing_status, federal_withholding, dependents, other_income,"
+    " w4_deductions, multiple_jobs, created_at, updated_at"
+)
+
+_PAY_PERIODS_REBUILD = """CREATE TABLE pay_periods_new (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    business_id INTEGER NOT NULL,
+    start_date TEXT NOT NULL,
+    end_date TEXT NOT NULL,
+    pay_date TEXT,
+    status TEXT NOT NULL DEFAULT 'open' CHECK(status IN ('open', 'closed')),
+    created_at TEXT NOT NULL,
+    FOREIGN KEY (business_id) REFERENCES businesses(id) ON DELETE CASCADE
+)"""
+
+_PAY_PERIODS_COLUMNS = (
+    "id, business_id, start_date, end_date, pay_date, status, created_at"
+)
+
+
+def _m009_payroll_business_scope(conn: sqlite3.Connection) -> None:
+    """Scope payroll to a business: rebuild employees and pay_periods with a
+    NOT NULL business_id and attach every pre-existing payroll row to one
+    business.
+
+    Strategy for existing unscoped rows:
+    - exactly one business exists -> the payroll belongs to it;
+    - zero or several businesses -> a dedicated "Migrated Payroll" business
+      is created and every global admin receives owner access (same
+      fail-closed rule as migration 8), so legacy payroll stays reachable
+      only by administrators until ownership is reassigned.
+
+    Payslips, deductions and employee_ytd need no column: they are scoped
+    through their employee/period parents, which all land in the same
+    business. The rebuild runs with foreign_keys OFF (see run_migrations)
+    because child tables reference the tables being replaced.
+    """
+    rebuild_employees = not column_exists(conn, "employees", "business_id")
+    rebuild_periods = not column_exists(conn, "pay_periods", "business_id")
+    if not rebuild_employees and not rebuild_periods:
+        return
+
+    has_payroll = (
+        conn.execute("SELECT COUNT(*) AS n FROM employees").fetchone()["n"]
+        + conn.execute("SELECT COUNT(*) AS n FROM pay_periods").fetchone()["n"]
+    ) > 0
+
+    business_id: int | None = None
+    if has_payroll:
+        row = conn.execute("SELECT id FROM businesses ORDER BY id").fetchall()
+        if len(row) == 1:
+            business_id = row[0]["id"]
+        else:
+            now = datetime.now(timezone.utc).isoformat()
+            cursor = conn.execute(
+                "INSERT INTO businesses"
+                " (legal_name, entity_type, created_at, updated_at)"
+                " VALUES ('Migrated Payroll', 'llc', ?, ?)",
+                (now, now),
+            )
+            business_id = cursor.lastrowid
+            conn.execute(
+                "INSERT OR IGNORE INTO user_business_access"
+                " (user_id, business_id, role, created_at, updated_at)"
+                " SELECT u.id, ?, 'owner', ?, ?"
+                " FROM users u WHERE u.role = 'admin'",
+                (business_id, now, now),
+            )
+
+    if rebuild_employees:
+        conn.execute(_EMPLOYEES_REBUILD)
+        conn.execute(
+            f"INSERT INTO employees_new ({_EMPLOYEES_COLUMNS})"
+            f" SELECT {_EMPLOYEES_COLUMNS.replace('business_id', '? AS business_id', 1)}"
+            " FROM employees",
+            (business_id,),
+        )
+        conn.execute("DROP TABLE employees")
+        conn.execute("ALTER TABLE employees_new RENAME TO employees")
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_employees_business ON employees(business_id)"
+    )
+    if rebuild_periods:
+        conn.execute(_PAY_PERIODS_REBUILD)
+        conn.execute(
+            f"INSERT INTO pay_periods_new ({_PAY_PERIODS_COLUMNS})"
+            f" SELECT {_PAY_PERIODS_COLUMNS.replace('business_id', '? AS business_id', 1)}"
+            " FROM pay_periods",
+            (business_id,),
+        )
+        conn.execute("DROP TABLE pay_periods")
+        conn.execute("ALTER TABLE pay_periods_new RENAME TO pay_periods")
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_pay_periods_business ON pay_periods(business_id)"
+    )
+
+
 MIGRATIONS: list[Migration] = [
     Migration(1, "employees_pay_frequency", _m001_employees_pay_frequency),
     Migration(2, "employee_w4_fields", _m002_employee_w4_fields),
@@ -200,6 +319,7 @@ MIGRATIONS: list[Migration] = [
     Migration(6, "contacts_1099_fields", _m006_contacts_1099_fields),
     Migration(7, "expense_approval", _m007_expense_approval),
     Migration(8, "user_business_access", _m008_user_business_access),
+    Migration(9, "payroll_business_scope", _m009_payroll_business_scope),
 ]
 
 LATEST_VERSION = MIGRATIONS[-1].version

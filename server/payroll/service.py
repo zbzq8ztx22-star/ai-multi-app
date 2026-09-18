@@ -87,6 +87,22 @@ def _validate_bool(value: Any, field: str) -> bool:
     raise ValueError(f"{field} must be a boolean")
 
 
+def _require_business_id(conn: Any, value: Any) -> int:
+    """Validate a business_id and confirm the business exists."""
+    if isinstance(value, bool) or value is None:
+        raise ValueError("business_id is required")
+    try:
+        business_id = int(value)
+    except (TypeError, ValueError):
+        raise ValueError("business_id must be an integer")
+    row = conn.execute(
+        "SELECT 1 FROM businesses WHERE id = ?", (business_id,)
+    ).fetchone()
+    if row is None:
+        raise ValueError("Business not found")
+    return business_id
+
+
 def _employee_defaults(data: dict[str, Any]) -> dict[str, Any]:
     return {
         "name": _validate_name(data.get("name")),
@@ -151,14 +167,16 @@ def create_employee(data: dict[str, Any]) -> dict[str, Any]:
     fields = _employee_defaults(data)
     now = now_utc()
     with get_db() as conn:
+        business_id = _require_business_id(conn, data.get("business_id"))
         cursor = conn.execute(
             """
             INSERT INTO employees
-                (name, position, pay_type, pay_frequency, rate, state, filing_status, federal_withholding, dependents, other_income, w4_deductions, multiple_jobs, created_at, updated_at)
+                (business_id, name, position, pay_type, pay_frequency, rate, state, filing_status, federal_withholding, dependents, other_income, w4_deductions, multiple_jobs, created_at, updated_at)
             VALUES
-                (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
+                business_id,
                 fields["name"],
                 fields["position"],
                 fields["pay_type"],
@@ -179,9 +197,12 @@ def create_employee(data: dict[str, Any]) -> dict[str, Any]:
         return get_employee(cursor.lastrowid)
 
 
-def list_employees() -> list[dict[str, Any]]:
+def list_employees(business_id: int) -> list[dict[str, Any]]:
     with get_db() as conn:
-        rows = conn.execute("SELECT * FROM employees ORDER BY created_at DESC").fetchall()
+        rows = conn.execute(
+            "SELECT * FROM employees WHERE business_id = ? ORDER BY created_at DESC",
+            (business_id,),
+        ).fetchall()
         return [row_to_dict(row) for row in rows]
 
 
@@ -245,12 +266,14 @@ def create_pay_period(data: dict[str, Any]) -> dict[str, Any]:
     fields = _period_defaults(data)
     now = now_utc()
     with get_db() as conn:
+        business_id = _require_business_id(conn, data.get("business_id"))
         cursor = conn.execute(
             """
-            INSERT INTO pay_periods (start_date, end_date, pay_date, status, created_at)
-            VALUES (?, ?, ?, ?, ?)
+            INSERT INTO pay_periods (business_id, start_date, end_date, pay_date, status, created_at)
+            VALUES (?, ?, ?, ?, ?, ?)
             """,
             (
+                business_id,
                 fields["start_date"],
                 fields["end_date"],
                 fields["pay_date"],
@@ -262,9 +285,12 @@ def create_pay_period(data: dict[str, Any]) -> dict[str, Any]:
         return get_pay_period(cursor.lastrowid)
 
 
-def list_pay_periods() -> list[dict[str, Any]]:
+def list_pay_periods(business_id: int) -> list[dict[str, Any]]:
     with get_db() as conn:
-        rows = conn.execute("SELECT * FROM pay_periods ORDER BY start_date DESC").fetchall()
+        rows = conn.execute(
+            "SELECT * FROM pay_periods WHERE business_id = ? ORDER BY start_date DESC",
+            (business_id,),
+        ).fetchall()
         return [row_to_dict(row) for row in rows]
 
 
@@ -518,6 +544,10 @@ def create_payslip(employee_id: int, period_id: int, data: dict[str, Any]) -> di
         period = _get_pay_period_conn(conn, period_id)
         if period is None:
             raise ValueError("Pay period not found")
+        if employee["business_id"] != period["business_id"]:
+            raise ValueError(
+                "Employee and pay period belong to different businesses"
+            )
 
         year = _payslip_year(period)
         calc, deductions = _build_payslip_values(employee, data)
@@ -581,16 +611,24 @@ def get_payslip(payslip_id: int) -> dict[str, Any] | None:
             return None
 
 
-def list_payslips(employee_id: int | None = None, period_id: int | None = None) -> list[dict[str, Any]]:
-    query = "SELECT * FROM payslips WHERE 1=1"
-    params: list[Any] = []
+def list_payslips(
+    business_id: int,
+    employee_id: int | None = None,
+    period_id: int | None = None,
+) -> list[dict[str, Any]]:
+    query = (
+        "SELECT payslips.* FROM payslips"
+        " JOIN employees ON employees.id = payslips.employee_id"
+        " WHERE employees.business_id = ?"
+    )
+    params: list[Any] = [business_id]
     if employee_id is not None:
-        query += " AND employee_id = ?"
+        query += " AND payslips.employee_id = ?"
         params.append(employee_id)
     if period_id is not None:
-        query += " AND period_id = ?"
+        query += " AND payslips.period_id = ?"
         params.append(period_id)
-    query += " ORDER BY created_at DESC"
+    query += " ORDER BY payslips.created_at DESC"
     with get_db() as conn:
         rows = conn.execute(query, params).fetchall()
         return [_get_payslip_with_deductions(conn, row["id"]) for row in rows]
@@ -674,8 +712,10 @@ def get_payroll_report(period_id: int) -> dict[str, Any]:
     if period is None:
         raise ValueError("Pay period not found")
 
-    employees_by_id = {emp["id"]: emp for emp in list_employees()}
-    payslips = list_payslips(period_id=period_id)
+    employees_by_id = {
+        emp["id"]: emp for emp in list_employees(period["business_id"])
+    }
+    payslips = list_payslips(period["business_id"], period_id=period_id)
 
     rows: list[dict[str, Any]] = []
     for slip in payslips:

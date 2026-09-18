@@ -1,7 +1,10 @@
 def test_create_and_list_taxpayer_with_employee_link(client):
+    biz = client.post(
+        "/api/entities/businesses", json={"legal_name": "Link Co"}
+    ).get_json()["id"]
     employee = client.post(
         "/api/payroll/employees",
-        json={"name": "Ana Rivera", "pay_type": "hourly", "rate": 30},
+        json={"business_id": biz, "name": "Ana Rivera", "pay_type": "hourly", "rate": 30},
     ).get_json()
     response = client.post(
         "/api/entities/taxpayers",
