@@ -69,6 +69,23 @@ def test_cash_flow_forecast_with_payables(client):
     assert result["total_expected_outflows"] > 0
 
 
+def test_cash_flow_forecast_includes_recurring_expenses(client):
+    business, cash, receivable, ap, revenue, expense = _setup(client, "Recurring Forecast LLC")
+    import datetime
+    today = datetime.date.today().isoformat()
+    client.post("/api/accounting/recurring-expenses", json={
+        "business_id": business["id"], "description": "Rent", "amount": 2000,
+        "expense_account_id": expense["id"], "payment_account_id": cash["id"],
+        "frequency": "monthly", "start_date": today,
+    })
+    response = client.get(f"/api/accounting/reports/cash-flow-forecast?business_id={business['id']}")
+    assert response.status_code == 200
+    result = response.get_json()
+    # The recurring expense's next_date falls in the current forecast month
+    assert result["monthly_forecast"][0]["expected_outflows"] == 2000
+    assert result["total_expected_outflows"] == 2000
+
+
 def test_cash_flow_forecast_custom_months(client):
     business = _business(client, "Custom Months LLC")
     result = client.get(f"/api/accounting/reports/cash-flow-forecast?business_id={business['id']}&months=6").get_json()

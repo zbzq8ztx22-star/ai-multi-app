@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import calendar
 import datetime
 import sqlite3
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
@@ -196,6 +197,13 @@ def _account_for_business(conn: sqlite3.Connection, business_id: int, account_id
 
 
 def _post_operation_entry(conn: sqlite3.Connection, business_id: int, entry_date: str, reference: str, description: str, lines: list[tuple[int, float, float]]) -> int:
+    """Single funnel for operation-generated posted journal entries.
+
+    Enforces the closed-period invariant here so no caller can post into a
+    closed accounting period by mistake.
+    """
+    if _is_period_closed(conn, business_id, entry_date):
+        raise ValueError("Cannot post to a closed accounting period")
     now = now_utc()
     cursor = conn.execute(
         "INSERT INTO journal_entries (business_id, entry_date, reference, description, status, created_at, updated_at) VALUES (?, ?, ?, ?, 'posted', ?, ?)",
@@ -203,8 +211,8 @@ def _post_operation_entry(conn: sqlite3.Connection, business_id: int, entry_date
     )
     entry_id = cursor.lastrowid
     conn.executemany(
-        "INSERT INTO journal_lines (entry_id, account_id, debit, credit) VALUES (?, ?, ?, ?)",
-        [(entry_id, account_id, debit, credit) for account_id, debit, credit in lines],
+        "INSERT INTO journal_lines (entry_id, account_id, description, debit, credit) VALUES (?, ?, ?, ?, ?)",
+        [(entry_id, account_id, description, debit, credit) for account_id, debit, credit in lines],
     )
     return entry_id
 
@@ -352,7 +360,9 @@ def list_expenses(business_id: int) -> list[dict[str, Any]]:
         return [row_to_dict(row) for row in rows]
 
 
-def create_expense(data: dict[str, Any]) -> dict[str, Any]:
+def _create_expense(conn: sqlite3.Connection, data: dict[str, Any]) -> dict[str, Any]:
+    """Validate and insert an expense inside an existing transaction so
+    callers (e.g. recurring-expense posting) stay atomic with other writes."""
     try:
         business_id = int(data.get("business_id"))
     except (TypeError, ValueError):
@@ -367,25 +377,30 @@ def create_expense(data: dict[str, Any]) -> dict[str, Any]:
     if approval_status not in ("pending", "approved", "rejected"):
         raise ValueError("approval_status must be one of: pending, approved, rejected")
     now = now_utc()
+    _require_business(conn, business_id)
+    if vendor_id:
+        contact = conn.execute("SELECT contact_type FROM accounting_contacts WHERE id = ? AND business_id = ?", (vendor_id, business_id)).fetchone()
+        if contact is None or contact["contact_type"] not in ("vendor", "both"):
+            raise ValueError("Vendor not found for this business")
+    expense_account = _account_for_business(conn, business_id, data.get("expense_account_id"), {"expense"}, "expense_account_id")
+    payment_account = _account_for_business(conn, business_id, data.get("payment_account_id"), {"asset", "liability"}, "payment_account_id")
+    reference = str(data.get("reference", "")).strip()
+    if approval_status == "approved":
+        entry_id = _post_operation_entry(conn, business_id, expense_date, reference, description, [(expense_account, amount, 0), (payment_account, 0, amount)])
+    else:
+        entry_id = None
+    cursor = conn.execute("""INSERT INTO expenses
+        (business_id, vendor_id, expense_date, reference, description, amount, expense_account_id, payment_account_id, journal_entry_id, approval_status, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+        (business_id, vendor_id, expense_date, reference, description, amount, expense_account, payment_account, entry_id, approval_status, now))
+    return row_to_dict(conn.execute("SELECT * FROM expenses WHERE id = ?", (cursor.lastrowid,)).fetchone())
+
+
+def create_expense(data: dict[str, Any]) -> dict[str, Any]:
     with get_db() as conn:
-        _require_business(conn, business_id)
-        if vendor_id:
-            contact = conn.execute("SELECT contact_type FROM accounting_contacts WHERE id = ? AND business_id = ?", (vendor_id, business_id)).fetchone()
-            if contact is None or contact["contact_type"] not in ("vendor", "both"):
-                raise ValueError("Vendor not found for this business")
-        expense_account = _account_for_business(conn, business_id, data.get("expense_account_id"), {"expense"}, "expense_account_id")
-        payment_account = _account_for_business(conn, business_id, data.get("payment_account_id"), {"asset", "liability"}, "payment_account_id")
-        reference = str(data.get("reference", "")).strip()
-        if approval_status == "approved":
-            entry_id = _post_operation_entry(conn, business_id, expense_date, reference, description, [(expense_account, amount, 0), (payment_account, 0, amount)])
-        else:
-            entry_id = None
-        cursor = conn.execute("""INSERT INTO expenses
-            (business_id, vendor_id, expense_date, reference, description, amount, expense_account_id, payment_account_id, journal_entry_id, approval_status, created_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            (business_id, vendor_id, expense_date, reference, description, amount, expense_account, payment_account, entry_id, approval_status, now))
+        result = _create_expense(conn, data)
         conn.commit()
-        return row_to_dict(conn.execute("SELECT * FROM expenses WHERE id = ?", (cursor.lastrowid,)).fetchone())
+        return result
 
 
 def approve_expense(expense_id: int, approver: str) -> dict[str, Any]:
@@ -1005,22 +1020,26 @@ def delete_reconciliation(reconciliation_id: int) -> None:
 RECURRING_FREQUENCIES = {"weekly", "monthly", "quarterly", "yearly"}
 
 
+def _add_months(d: datetime.date, months: int) -> datetime.date:
+    """Advance by whole months, clamping the day to the target month's end
+    so dates like Jan 31 or Feb 29 never produce an invalid date."""
+    month = d.month - 1 + months
+    year = d.year + month // 12
+    month = month % 12 + 1
+    day = min(d.day, calendar.monthrange(year, month)[1])
+    return d.replace(year=year, month=month, day=day)
+
+
 def _advance_date(date_str: str, frequency: str) -> str:
     d = datetime.date.fromisoformat(date_str)
     if frequency == "weekly":
         d += datetime.timedelta(weeks=1)
     elif frequency == "monthly":
-        month = d.month + 1
-        year = d.year + (month - 1) // 12
-        month = ((month - 1) % 12) + 1
-        d = d.replace(year=year, month=month)
+        d = _add_months(d, 1)
     elif frequency == "quarterly":
-        month = d.month + 3
-        year = d.year + (month - 1) // 12
-        month = ((month - 1) % 12) + 1
-        d = d.replace(year=year, month=month)
+        d = _add_months(d, 3)
     elif frequency == "yearly":
-        d = d.replace(year=d.year + 1)
+        d = _add_months(d, 12)
     return d.isoformat()
 
 
@@ -1149,7 +1168,9 @@ def post_due_recurring_expenses(business_id: int, as_of: str | None = None) -> l
                 "expense_account_id": row["expense_account_id"],
                 "payment_account_id": row["payment_account_id"],
             }
-            create_expense(expense_data)
+            # Same connection: the expense insert, its journal entry and the
+            # next_date advance below all commit or roll back together.
+            _create_expense(conn, expense_data)
             next_date = _advance_date(row["next_date"], row["frequency"])
             if row["end_date"] and next_date > row["end_date"]:
                 conn.execute("UPDATE recurring_expenses SET active = 0, last_posted_date = ?, next_date = ?, updated_at = ? WHERE id = ?",
@@ -1571,19 +1592,10 @@ def create_credit_note(data: dict[str, Any]) -> dict[str, Any]:
             if cust is None:
                 raise ValueError("Customer not found for this business")
         # Create reversing journal entry: credit receivable (reduce AR), debit revenue (reduce revenue)
-        entry_cursor = conn.execute(
-            "INSERT INTO journal_entries (business_id, entry_date, reference, description, status, created_at, updated_at) VALUES (?, ?, ?, ?, 'posted', ?, ?)",
-            (business_id, credit_date, credit_number, f"Credit note {credit_number}", now, now),
-        )
-        entry_id = entry_cursor.lastrowid
-        # Debit revenue (reduce revenue), credit receivable (reduce AR)
-        conn.execute(
-            "INSERT INTO journal_lines (entry_id, account_id, description, debit, credit) VALUES (?, ?, ?, ?, ?)",
-            (entry_id, revenue_account_id, f"Credit note {credit_number}", amount, 0),
-        )
-        conn.execute(
-            "INSERT INTO journal_lines (entry_id, account_id, description, debit, credit) VALUES (?, ?, ?, ?, ?)",
-            (entry_id, receivable_account_id, f"Credit note {credit_number}", 0, amount),
+        entry_id = _post_operation_entry(
+            conn, business_id, credit_date, credit_number,
+            f"Credit note {credit_number}",
+            [(revenue_account_id, amount, 0), (receivable_account_id, 0, amount)],
         )
         # If linked to invoice, reduce invoice amount
         if invoice_id is not None:
@@ -1610,19 +1622,10 @@ def void_credit_note(business_id: int, credit_id: int) -> dict[str, Any]:
             raise ValueError("Credit note is already void")
         # Create reversing entry
         now = now_utc()
-        entry_cursor = conn.execute(
-            "INSERT INTO journal_entries (business_id, entry_date, reference, description, status, created_at, updated_at) VALUES (?, ?, ?, ?, 'posted', ?, ?)",
-            (business_id, now[:10], f"VOID-{row['credit_number']}", f"Void credit note {row['credit_number']}", now, now),
-        )
-        entry_id = entry_cursor.lastrowid
-        # Reverse the original entry
-        conn.execute(
-            "INSERT INTO journal_lines (entry_id, account_id, description, debit, credit) VALUES (?, ?, ?, ?, ?)",
-            (entry_id, row["receivable_account_id"], f"Void CN {row['credit_number']}", row["amount"], 0),
-        )
-        conn.execute(
-            "INSERT INTO journal_lines (entry_id, account_id, description, debit, credit) VALUES (?, ?, ?, ?, ?)",
-            (entry_id, row["revenue_account_id"], f"Void CN {row['credit_number']}", 0, row["amount"]),
+        entry_id = _post_operation_entry(
+            conn, business_id, now[:10], f"VOID-{row['credit_number']}",
+            f"Void credit note {row['credit_number']}",
+            [(row["receivable_account_id"], row["amount"], 0), (row["revenue_account_id"], 0, row["amount"])],
         )
         # If linked to invoice, reverse the amount_paid reduction
         if row["invoice_id"] is not None:
@@ -1793,18 +1796,10 @@ def post_depreciation(asset_id: int, through_date: str) -> dict[str, Any]:
             raise ValueError("No depreciation to post for this period")
         now = now_utc()
         # Create journal entry: debit depreciation expense, credit accumulated depreciation
-        entry_cursor = conn.execute(
-            "INSERT INTO journal_entries (business_id, entry_date, reference, description, status, created_at, updated_at) VALUES (?, ?, ?, ?, 'posted', ?, ?)",
-            (asset["business_id"], through_date, f"DEP-{asset['id']}", f"Depreciation for {asset['name']}", now, now),
-        )
-        entry_id = entry_cursor.lastrowid
-        conn.execute(
-            "INSERT INTO journal_lines (entry_id, account_id, description, debit, credit) VALUES (?, ?, ?, ?, ?)",
-            (entry_id, asset["depreciation_account_id"], f"Depreciation {asset['name']}", total_dep, 0),
-        )
-        conn.execute(
-            "INSERT INTO journal_lines (entry_id, account_id, description, debit, credit) VALUES (?, ?, ?, ?, ?)",
-            (entry_id, asset["accumulated_account_id"], f"Accumulated dep {asset['name']}", 0, total_dep),
+        entry_id = _post_operation_entry(
+            conn, asset["business_id"], through_date, f"DEP-{asset['id']}",
+            f"Depreciation for {asset['name']}",
+            [(asset["depreciation_account_id"], total_dep, 0), (asset["accumulated_account_id"], 0, total_dep)],
         )
         # Check if fully depreciated
         if total_dep >= (asset["cost"] - asset["salvage_value"]):
@@ -2507,17 +2502,11 @@ def update_purchase_order_status(po_id: int, status: str) -> dict[str, Any]:
             raise ValueError("Cannot change status of a received purchase order")
         if status == "received" and row["status"] != "received":
             # Create journal entry for the purchase
-            if _is_period_closed(conn, row["business_id"], row["order_date"]):
-                raise ValueError("Cannot post to a closed accounting period")
-            entry_cursor = conn.execute(
-                "INSERT INTO journal_entries (business_id, entry_date, reference, description, status, created_at, updated_at) VALUES (?, ?, ?, ?, 'posted', ?, ?)",
-                (row["business_id"], row["order_date"], row["po_number"], f"Purchase order {row['po_number']}", now, now),
+            entry_id = _post_operation_entry(
+                conn, row["business_id"], row["order_date"], row["po_number"],
+                f"Purchase order {row['po_number']}",
+                [(row["expense_account_id"], row["total_amount"], 0), (row["payment_account_id"], 0, row["total_amount"])],
             )
-            entry_id = entry_cursor.lastrowid
-            conn.execute("INSERT INTO journal_lines (entry_id, account_id, description, debit, credit) VALUES (?, ?, ?, ?, ?)",
-                         (entry_id, row["expense_account_id"], f"PO {row['po_number']}", row["total_amount"], 0))
-            conn.execute("INSERT INTO journal_lines (entry_id, account_id, description, debit, credit) VALUES (?, ?, ?, ?, ?)",
-                         (entry_id, row["payment_account_id"], f"PO {row['po_number']}", 0, row["total_amount"]))
             conn.execute("UPDATE purchase_orders SET status = ?, journal_entry_id = ?, updated_at = ? WHERE id = ?", (status, entry_id, now, po_id))
         else:
             conn.execute("UPDATE purchase_orders SET status = ?, updated_at = ? WHERE id = ?", (status, now, po_id))
@@ -2621,30 +2610,20 @@ def dispose_fixed_asset(asset_id: int, disposal_date: str, disposal_price: float
         accumulated_dep = round(dep_rows["accumulated"], 2)
         book_value = round(asset["cost"] - accumulated_dep, 2)
         gain_loss = round(disposal_price - book_value, 2)
-        # Create disposal journal entry
-        entry_cursor = conn.execute(
-            "INSERT INTO journal_entries (business_id, entry_date, reference, description, status, created_at, updated_at) VALUES (?, ?, ?, ?, 'posted', ?, ?)",
-            (asset["business_id"], disposal_date, f"DISP-{asset['id']}", f"Disposal of {asset['name']}", now, now),
-        )
-        entry_id = entry_cursor.lastrowid
-        # Credit asset account (remove cost)
-        conn.execute("INSERT INTO journal_lines (entry_id, account_id, description, debit, credit) VALUES (?, ?, ?, ?, ?)",
-                     (entry_id, asset["asset_account_id"], f"Dispose {asset['name']}", 0, asset["cost"]))
-        # Debit accumulated depreciation (remove accumulated dep) - skip if 0
+        # Create disposal journal entry through the common posting layer
+        lines = [(asset["asset_account_id"], 0, asset["cost"])]
         if accumulated_dep > 0:
-            conn.execute("INSERT INTO journal_lines (entry_id, account_id, description, debit, credit) VALUES (?, ?, ?, ?, ?)",
-                         (entry_id, asset["accumulated_account_id"], f"Dispose {asset['name']}", accumulated_dep, 0))
-        # Debit cash/receivable for disposal price - skip if 0
+            lines.append((asset["accumulated_account_id"], accumulated_dep, 0))
         if disposal_price > 0:
-            conn.execute("INSERT INTO journal_lines (entry_id, account_id, description, debit, credit) VALUES (?, ?, ?, ?, ?)",
-                         (entry_id, gain_loss_account_id, f"Dispose {asset['name']}", disposal_price, 0))
-        # Credit/Debit gain or loss - skip if 0
+            lines.append((gain_loss_account_id, disposal_price, 0))
         if gain_loss > 0:
-            conn.execute("INSERT INTO journal_lines (entry_id, account_id, description, debit, credit) VALUES (?, ?, ?, ?, ?)",
-                         (entry_id, gain_loss_account_id, f"Gain on disposal {asset['name']}", 0, gain_loss))
+            lines.append((gain_loss_account_id, 0, gain_loss))
         elif gain_loss < 0:
-            conn.execute("INSERT INTO journal_lines (entry_id, account_id, description, debit, credit) VALUES (?, ?, ?, ?, ?)",
-                         (entry_id, gain_loss_account_id, f"Loss on disposal {asset['name']}", abs(gain_loss), 0))
+            lines.append((gain_loss_account_id, abs(gain_loss), 0))
+        entry_id = _post_operation_entry(
+            conn, asset["business_id"], disposal_date, f"DISP-{asset['id']}",
+            f"Disposal of {asset['name']}", lines,
+        )
         # Mark asset as disposed
         conn.execute("UPDATE depreciation_assets SET status = 'disposed', updated_at = ? WHERE id = ?", (now, asset_id))
         conn.commit()
@@ -2718,7 +2697,7 @@ def cash_flow_forecast(business_id: int, months: int = 3) -> dict[str, Any]:
             # Recurring expenses due in this month
             for rec in recurring_rows:
                 rec = row_to_dict(rec)
-                next_date = datetime.date.fromisoformat(rec["next_due_date"]) if rec["next_due_date"] else None
+                next_date = datetime.date.fromisoformat(rec["next_date"]) if rec["next_date"] else None
                 if next_date and month_date <= next_date.replace(day=1) <= month_end:
                     outflows = round(outflows + rec["amount"], 2)
             net = round(inflows - outflows, 2)

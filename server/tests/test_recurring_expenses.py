@@ -92,6 +92,54 @@ def test_post_due_respects_end_date(client):
     assert recs[0]["active"] == 0
 
 
+def test_post_due_month_end_jan_31(client):
+    business, cash, expense = _setup(client, "MonthEnd Jan LLC")
+    client.post("/api/accounting/recurring-expenses", json={"business_id": business["id"], "description": "Rent", "amount": 2000, "expense_account_id": expense["id"], "payment_account_id": cash["id"], "frequency": "monthly", "start_date": "2026-01-31"})
+    result = client.post(f"/api/accounting/recurring-expenses/post-due?business_id={business['id']}&as_of=2026-02-15").get_json()
+    assert result["posted_count"] == 1
+    recs = client.get(f"/api/accounting/recurring-expenses?business_id={business['id']}").get_json()
+    # Jan 31 + 1 month must clamp to the last day of February (non-leap year)
+    assert recs[0]["next_date"] == "2026-02-28"
+    expenses = client.get(f"/api/accounting/expenses?business_id={business['id']}").get_json()
+    assert expenses[0]["expense_date"] == "2026-01-31"
+
+
+def test_post_due_month_end_mar_31(client):
+    business, cash, expense = _setup(client, "MonthEnd Mar LLC")
+    client.post("/api/accounting/recurring-expenses", json={"business_id": business["id"], "description": "Rent", "amount": 2000, "expense_account_id": expense["id"], "payment_account_id": cash["id"], "frequency": "monthly", "start_date": "2026-03-31"})
+    result = client.post(f"/api/accounting/recurring-expenses/post-due?business_id={business['id']}&as_of=2026-04-15").get_json()
+    assert result["posted_count"] == 1
+    recs = client.get(f"/api/accounting/recurring-expenses?business_id={business['id']}").get_json()
+    # Mar 31 + 1 month must clamp to Apr 30
+    assert recs[0]["next_date"] == "2026-04-30"
+
+
+def test_post_due_leap_year_feb_29(client):
+    business, cash, expense = _setup(client, "Leap LLC")
+    client.post("/api/accounting/recurring-expenses", json={"business_id": business["id"], "description": "Lease", "amount": 3000, "expense_account_id": expense["id"], "payment_account_id": cash["id"], "frequency": "yearly", "start_date": "2024-02-29"})
+    result = client.post(f"/api/accounting/recurring-expenses/post-due?business_id={business['id']}&as_of=2024-03-15").get_json()
+    assert result["posted_count"] == 1
+    recs = client.get(f"/api/accounting/recurring-expenses?business_id={business['id']}").get_json()
+    # 2024-02-29 + 1 year must clamp to 2025-02-28 (2025 is not a leap year)
+    assert recs[0]["next_date"] == "2025-02-28"
+
+
+def test_post_due_rolls_back_on_posting_failure(client):
+    business, cash, expense = _setup(client, "Atomic LLC")
+    client.post("/api/accounting/recurring-expenses", json={"business_id": business["id"], "description": "Rent", "amount": 2000, "expense_account_id": expense["id"], "payment_account_id": cash["id"], "frequency": "monthly", "start_date": "2026-01-31"})
+    # Close the period covering next_date so posting fails inside the transaction
+    client.post("/api/accounting/closing-periods", json={"business_id": business["id"], "period_start": "2026-01-01", "period_end": "2026-01-31"})
+    response = client.post(f"/api/accounting/recurring-expenses/post-due?business_id={business['id']}&as_of=2026-02-15")
+    assert response.status_code == 400
+    # The expense insert and the next_date advance must roll back together
+    expenses = client.get(f"/api/accounting/expenses?business_id={business['id']}").get_json()
+    assert len(expenses) == 0
+    recs = client.get(f"/api/accounting/recurring-expenses?business_id={business['id']}").get_json()
+    assert recs[0]["next_date"] == "2026-01-31"
+    assert recs[0]["last_posted_date"] is None
+    assert recs[0]["active"] == 1
+
+
 def test_recurring_isolated_per_business(client):
     first, cash1, exp1 = _setup(client, "First LLC")
     second, cash2, exp2 = _setup(client, "Second LLC")
