@@ -22,6 +22,14 @@ class FakeOpenExecSession:
         return self.response
 
 
+@pytest.fixture
+def biz(client):
+    """A business owned by the logged-in admin; payroll data is tenant-scoped."""
+    resp = client.post("/api/entities/businesses", json={"legal_name": "Test Biz"})
+    assert resp.status_code == 201
+    return resp.get_json()["id"]
+
+
 # --------------------------------------------------------------------------- #
 # Calculator
 # --------------------------------------------------------------------------- #
@@ -112,10 +120,10 @@ def test_calculator_rejects_invalid_employee():
 # --------------------------------------------------------------------------- #
 
 
-def test_create_and_list_employees(client):
+def test_create_and_list_employees(client, biz):
     resp = client.post(
         "/api/payroll/employees",
-        json={"name": "Alice", "pay_type": "hourly", "rate": 20.0},
+        json={"business_id": biz, "name": "Alice", "pay_type": "hourly", "rate": 20.0},
     )
     assert resp.status_code == 201
     body = resp.get_json()
@@ -123,15 +131,15 @@ def test_create_and_list_employees(client):
     assert body["pay_type"] == "hourly"
     assert body["rate"] == 20.0
 
-    resp = client.get("/api/payroll/employees")
+    resp = client.get(f"/api/payroll/employees?business_id={biz}")
     assert resp.status_code == 200
     assert len(resp.get_json()) == 1
 
 
-def test_get_employee_by_id(client):
+def test_get_employee_by_id(client, biz):
     resp = client.post(
         "/api/payroll/employees",
-        json={"name": "Bob", "pay_type": "salary", "rate": 52000.0, "pay_frequency": "biweekly"},
+        json={"business_id": biz, "name": "Bob", "pay_type": "salary", "rate": 52000.0, "pay_frequency": "biweekly"},
     )
     employee_id = resp.get_json()["id"]
     resp = client.get(f"/api/payroll/employees/{employee_id}")
@@ -139,15 +147,15 @@ def test_get_employee_by_id(client):
     assert resp.get_json()["name"] == "Bob"
 
 
-def test_get_employee_not_found(client):
+def test_get_employee_not_found(client, biz):
     resp = client.get("/api/payroll/employees/999")
     assert resp.status_code == 404
 
 
-def test_update_employee(client):
+def test_update_employee(client, biz):
     resp = client.post(
         "/api/payroll/employees",
-        json={"name": "Charlie", "pay_type": "hourly", "rate": 18.0},
+        json={"business_id": biz, "name": "Charlie", "pay_type": "hourly", "rate": 18.0},
     )
     employee_id = resp.get_json()["id"]
     resp = client.put(
@@ -159,10 +167,10 @@ def test_update_employee(client):
     assert resp.get_json()["rate"] == 20.0
 
 
-def test_delete_employee(client):
+def test_delete_employee(client, biz):
     resp = client.post(
         "/api/payroll/employees",
-        json={"name": "Dana", "pay_type": "hourly", "rate": 22.0},
+        json={"business_id": biz, "name": "Dana", "pay_type": "hourly", "rate": 22.0},
     )
     employee_id = resp.get_json()["id"]
     resp = client.delete(f"/api/payroll/employees/{employee_id}")
@@ -172,12 +180,12 @@ def test_delete_employee(client):
     assert resp.status_code == 404
 
 
-def test_create_employee_validation_errors(client):
-    resp = client.post("/api/payroll/employees", json={})
+def test_create_employee_validation_errors(client, biz):
+    resp = client.post("/api/payroll/employees", json={"business_id": biz, })
     assert resp.status_code == 400
     resp = client.post(
         "/api/payroll/employees",
-        json={"name": "Test", "pay_type": "weekly", "rate": 10.0},
+        json={"business_id": biz, "name": "Test", "pay_type": "weekly", "rate": 10.0},
     )
     assert resp.status_code == 400
 
@@ -187,10 +195,10 @@ def test_create_employee_validation_errors(client):
 # --------------------------------------------------------------------------- #
 
 
-def test_create_and_list_pay_periods(client):
+def test_create_and_list_pay_periods(client, biz):
     resp = client.post(
         "/api/payroll/pay-periods",
-        json={"start_date": "2026-09-01", "end_date": "2026-09-15", "pay_date": "2026-09-20"},
+        json={"business_id": biz, "start_date": "2026-09-01", "end_date": "2026-09-15", "pay_date": "2026-09-20"},
     )
     assert resp.status_code == 201
     body = resp.get_json()
@@ -198,10 +206,10 @@ def test_create_and_list_pay_periods(client):
     assert body["status"] == "open"
 
 
-def test_pay_period_end_before_start(client):
+def test_pay_period_end_before_start(client, biz):
     resp = client.post(
         "/api/payroll/pay-periods",
-        json={"start_date": "2026-09-15", "end_date": "2026-09-01"},
+        json={"business_id": biz, "start_date": "2026-09-15", "end_date": "2026-09-01"},
     )
     assert resp.status_code == 400
 
@@ -211,14 +219,14 @@ def test_pay_period_end_before_start(client):
 # --------------------------------------------------------------------------- #
 
 
-def test_create_payslip_hourly(client):
+def test_create_payslip_hourly(client, biz):
     emp = client.post(
         "/api/payroll/employees",
-        json={"name": "Eve", "pay_type": "hourly", "rate": 20.0},
+        json={"business_id": biz, "name": "Eve", "pay_type": "hourly", "rate": 20.0},
     ).get_json()
     period = client.post(
         "/api/payroll/pay-periods",
-        json={"start_date": "2026-09-01", "end_date": "2026-09-15"},
+        json={"business_id": biz, "start_date": "2026-09-01", "end_date": "2026-09-15"},
     ).get_json()
     resp = client.post(
         "/api/payroll/payslips",
@@ -241,14 +249,14 @@ def test_create_payslip_hourly(client):
     assert len(body["deductions"]) == 1
 
 
-def test_create_payslip_salary(client):
+def test_create_payslip_salary(client, biz):
     emp = client.post(
         "/api/payroll/employees",
-        json={"name": "Frank", "pay_type": "salary", "rate": 52000.0},
+        json={"business_id": biz, "name": "Frank", "pay_type": "salary", "rate": 52000.0},
     ).get_json()
     period = client.post(
         "/api/payroll/pay-periods",
-        json={"start_date": "2026-09-01", "end_date": "2026-09-15"},
+        json={"business_id": biz, "start_date": "2026-09-01", "end_date": "2026-09-15"},
     ).get_json()
     resp = client.post(
         "/api/payroll/payslips",
@@ -263,14 +271,14 @@ def test_create_payslip_salary(client):
     assert body["net_pay"] == 1685.4
 
 
-def test_duplicate_payslip_rejected(client):
+def test_duplicate_payslip_rejected(client, biz):
     emp = client.post(
         "/api/payroll/employees",
-        json={"name": "Grace", "pay_type": "hourly", "rate": 15.0},
+        json={"business_id": biz, "name": "Grace", "pay_type": "hourly", "rate": 15.0},
     ).get_json()
     period = client.post(
         "/api/payroll/pay-periods",
-        json={"start_date": "2026-09-01", "end_date": "2026-09-15"},
+        json={"business_id": biz, "start_date": "2026-09-01", "end_date": "2026-09-15"},
     ).get_json()
     payload = {"employee_id": emp["id"], "period_id": period["id"], "regular_hours": 20}
     resp = client.post("/api/payroll/payslips", json=payload)
@@ -279,32 +287,32 @@ def test_duplicate_payslip_rejected(client):
     assert resp.status_code == 400
 
 
-def test_list_payslips_by_period(client):
+def test_list_payslips_by_period(client, biz):
     emp = client.post(
         "/api/payroll/employees",
-        json={"name": "Hank", "pay_type": "hourly", "rate": 15.0},
+        json={"business_id": biz, "name": "Hank", "pay_type": "hourly", "rate": 15.0},
     ).get_json()
     period = client.post(
         "/api/payroll/pay-periods",
-        json={"start_date": "2026-09-01", "end_date": "2026-09-15"},
+        json={"business_id": biz, "start_date": "2026-09-01", "end_date": "2026-09-15"},
     ).get_json()
     client.post(
         "/api/payroll/payslips",
         json={"employee_id": emp["id"], "period_id": period["id"], "regular_hours": 40},
     )
-    resp = client.get(f"/api/payroll/payslips?period_id={period['id']}")
+    resp = client.get(f"/api/payroll/payslips?period_id={period['id']}&business_id={biz}")
     assert resp.status_code == 200
     assert len(resp.get_json()) == 1
 
 
-def test_update_payslip(client):
+def test_update_payslip(client, biz):
     emp = client.post(
         "/api/payroll/employees",
-        json={"name": "Ivy", "pay_type": "hourly", "rate": 15.0},
+        json={"business_id": biz, "name": "Ivy", "pay_type": "hourly", "rate": 15.0},
     ).get_json()
     period = client.post(
         "/api/payroll/pay-periods",
-        json={"start_date": "2026-09-01", "end_date": "2026-09-15"},
+        json={"business_id": biz, "start_date": "2026-09-01", "end_date": "2026-09-15"},
     ).get_json()
     payslip = client.post(
         "/api/payroll/payslips",
@@ -320,14 +328,14 @@ def test_update_payslip(client):
     assert body["deductions"][0]["name"] == "Tax"
 
 
-def test_delete_payslip(client):
+def test_delete_payslip(client, biz):
     emp = client.post(
         "/api/payroll/employees",
-        json={"name": "Jack", "pay_type": "hourly", "rate": 15.0},
+        json={"business_id": biz, "name": "Jack", "pay_type": "hourly", "rate": 15.0},
     ).get_json()
     period = client.post(
         "/api/payroll/pay-periods",
-        json={"start_date": "2026-09-01", "end_date": "2026-09-15"},
+        json={"business_id": biz, "start_date": "2026-09-01", "end_date": "2026-09-15"},
     ).get_json()
     payslip = client.post(
         "/api/payroll/payslips",
@@ -344,29 +352,29 @@ def test_delete_payslip(client):
 # --------------------------------------------------------------------------- #
 
 
-def test_assistant_local_command_list_employees(client):
+def test_assistant_local_command_list_employees(client, biz):
     client.post(
         "/api/payroll/employees",
-        json={"name": "Zoe", "pay_type": "hourly", "rate": 22.0},
+        json={"business_id": biz, "name": "Zoe", "pay_type": "hourly", "rate": 22.0},
     )
-    resp = client.post("/api/payroll/assistant", json={"message": "list employees"})
+    resp = client.post("/api/payroll/assistant", json={"business_id": biz, "message": "list employees"})
     assert resp.status_code == 200
     body = resp.get_json()
     assert "Zoe" in body["response"]
 
 
-def test_assistant_local_command_list_periods(client):
+def test_assistant_local_command_list_periods(client, biz):
     client.post(
         "/api/payroll/pay-periods",
-        json={"start_date": "2026-09-01", "end_date": "2026-09-15"},
+        json={"business_id": biz, "start_date": "2026-09-01", "end_date": "2026-09-15"},
     )
-    resp = client.post("/api/payroll/assistant", json={"message": "show pay periods"})
+    resp = client.post("/api/payroll/assistant", json={"business_id": biz, "message": "show pay periods"})
     assert resp.status_code == 200
     body = resp.get_json()
     assert "2026-09-01" in body["response"]
 
 
-def test_assistant_asks_openexecutive_with_context(client, monkeypatch):
+def test_assistant_asks_openexecutive_with_context(client, biz, monkeypatch):
     sse = (
         _sse_event({"type": "chunk", "content": "You have 1 employee.", "session_id": "sess-p"})
         + _sse_event({"type": "done", "session_id": "sess-p"})
@@ -376,11 +384,11 @@ def test_assistant_asks_openexecutive_with_context(client, monkeypatch):
 
     client.post(
         "/api/payroll/employees",
-        json={"name": "Leo", "pay_type": "salary", "rate": 52000.0},
+        json={"business_id": biz, "name": "Leo", "pay_type": "salary", "rate": 52000.0},
     )
     resp = client.post(
         "/api/payroll/assistant",
-        json={"message": "how many employees do I have?", "session_id": "sess-1"},
+        json={"business_id": biz, "message": "how many employees do I have?", "session_id": "sess-1"},
     )
     assert resp.status_code == 200
     body = resp.get_json()
@@ -392,24 +400,24 @@ def test_assistant_asks_openexecutive_with_context(client, monkeypatch):
     assert fake.calls["headers"]["x-api-key"] == "test-key"
 
 
-def test_assistant_openexecutive_error_returns_502(client, monkeypatch):
+def test_assistant_openexecutive_error_returns_502(client, biz, monkeypatch):
     sse = _sse_event({"type": "error", "message": "model failure", "session_id": "sess-err"})
     fake = FakeOpenExecSession(MockResponse(text=sse, status_code=200))
     monkeypatch.setattr("payroll.openexec.http_session", fake)
 
-    resp = client.post("/api/payroll/assistant", json={"message": "what is payroll?"})
+    resp = client.post("/api/payroll/assistant", json={"business_id": biz, "message": "what is payroll?"})
     assert resp.status_code == 502
     assert "model failure" in resp.get_json()["error"]
 
 
-def test_assistant_validation(client):
-    resp = client.post("/api/payroll/assistant", json={})
+def test_assistant_validation(client, biz):
+    resp = client.post("/api/payroll/assistant", json={"business_id": biz, })
     assert resp.status_code == 400
-    resp = client.post("/api/payroll/assistant", json={"message": "   "})
+    resp = client.post("/api/payroll/assistant", json={"business_id": biz, "message": "   "})
     assert resp.status_code == 400
     resp = client.post(
         "/api/payroll/assistant",
-        json={"message": "hello", "committee_review": "false"},
+        json={"business_id": biz, "message": "hello", "committee_review": "false"},
     )
     assert resp.status_code == 400
 
@@ -419,14 +427,14 @@ def test_assistant_validation(client):
 # --------------------------------------------------------------------------- #
 
 
-def test_payroll_report_json(client):
+def test_payroll_report_json(client, biz):
     emp = client.post(
         "/api/payroll/employees",
-        json={"name": "Kate", "pay_type": "hourly", "rate": 30.0},
+        json={"business_id": biz, "name": "Kate", "pay_type": "hourly", "rate": 30.0},
     ).get_json()
     period = client.post(
         "/api/payroll/pay-periods",
-        json={"start_date": "2026-09-01", "end_date": "2026-09-15"},
+        json={"business_id": biz, "start_date": "2026-09-01", "end_date": "2026-09-15"},
     ).get_json()
     client.post(
         "/api/payroll/payslips",
@@ -443,14 +451,14 @@ def test_payroll_report_json(client):
     assert report["total_net"] < report["total_gross"]
 
 
-def test_payroll_report_csv(client):
+def test_payroll_report_csv(client, biz):
     emp = client.post(
         "/api/payroll/employees",
-        json={"name": "Leo", "pay_type": "hourly", "rate": 25.0},
+        json={"business_id": biz, "name": "Leo", "pay_type": "hourly", "rate": 25.0},
     ).get_json()
     period = client.post(
         "/api/payroll/pay-periods",
-        json={"start_date": "2026-09-01", "end_date": "2026-09-15"},
+        json={"business_id": biz, "start_date": "2026-09-01", "end_date": "2026-09-15"},
     ).get_json()
     client.post(
         "/api/payroll/payslips",
@@ -466,7 +474,7 @@ def test_payroll_report_csv(client):
     assert "Leo" in csv_text
 
 
-def test_payroll_report_not_found(client):
+def test_payroll_report_not_found(client, biz):
     resp = client.get("/api/payroll/reports/999")
     assert resp.status_code == 404
 
@@ -476,15 +484,15 @@ def test_payroll_report_not_found(client):
 # --------------------------------------------------------------------------- #
 
 
-def _make_period(client, start: str, end: str) -> dict:
-    resp = client.post("/api/payroll/pay-periods", json={"start_date": start, "end_date": end})
+def _make_period(client, biz, start: str, end: str) -> dict:
+    resp = client.post("/api/payroll/pay-periods", json={"business_id": biz, "start_date": start, "end_date": end})
     return resp.get_json()
 
 
-def test_ytd_caps_social_security(client):
+def test_ytd_caps_social_security(client, biz):
     emp = client.post(
         "/api/payroll/employees",
-        json={"name": "High Earner", "pay_type": "salary", "rate": 400000.0, "pay_frequency": "biweekly"},
+        json={"business_id": biz, "name": "High Earner", "pay_type": "salary", "rate": 400000.0, "pay_frequency": "biweekly"},
     ).get_json()
 
     base = datetime(2026, 1, 1)
@@ -492,7 +500,7 @@ def test_ytd_caps_social_security(client):
     for i in range(12):
         start = (base + timedelta(days=14 * i)).strftime("%Y-%m-%d")
         end = (base + timedelta(days=14 * (i + 1) - 1)).strftime("%Y-%m-%d")
-        period = _make_period(client, start, end)
+        period = _make_period(client, biz, start, end)
         slip = client.post(
             "/api/payroll/payslips",
             json={"employee_id": emp["id"], "period_id": period["id"]},
@@ -507,10 +515,10 @@ def test_ytd_caps_social_security(client):
     assert abs(total_fica - expected_max) < 0.1
 
 
-def test_ytd_triggers_additional_medicare_tax(client):
+def test_ytd_triggers_additional_medicare_tax(client, biz):
     emp = client.post(
         "/api/payroll/employees",
-        json={"name": "Very High Earner", "pay_type": "salary", "rate": 500000.0, "pay_frequency": "biweekly"},
+        json={"business_id": biz, "name": "Very High Earner", "pay_type": "salary", "rate": 500000.0, "pay_frequency": "biweekly"},
     ).get_json()
 
     base = datetime(2026, 1, 1)
@@ -518,7 +526,7 @@ def test_ytd_triggers_additional_medicare_tax(client):
     for i in range(12):
         start = (base + timedelta(days=14 * i)).strftime("%Y-%m-%d")
         end = (base + timedelta(days=14 * (i + 1) - 1)).strftime("%Y-%m-%d")
-        period = _make_period(client, start, end)
+        period = _make_period(client, biz, start, end)
         slip = client.post(
             "/api/payroll/payslips",
             json={"employee_id": emp["id"], "period_id": period["id"]},
@@ -531,19 +539,19 @@ def test_ytd_triggers_additional_medicare_tax(client):
     assert slips[-1]["medicare_tax"] > slips[10]["medicare_tax"]
 
 
-def test_w4_adjustments_reduce_federal_tax(client):
+def test_w4_adjustments_reduce_federal_tax(client, biz):
     period_base = client.post(
         "/api/payroll/pay-periods",
-        json={"start_date": "2026-01-01", "end_date": "2026-01-31"},
+        json={"business_id": biz, "start_date": "2026-01-01", "end_date": "2026-01-31"},
     ).get_json()
     period_w4 = client.post(
         "/api/payroll/pay-periods",
-        json={"start_date": "2026-02-01", "end_date": "2026-02-28"},
+        json={"business_id": biz, "start_date": "2026-02-01", "end_date": "2026-02-28"},
     ).get_json()
 
     emp_base = client.post(
         "/api/payroll/employees",
-        json={"name": "Base", "pay_type": "salary", "rate": 60000.0, "pay_frequency": "monthly"},
+        json={"business_id": biz, "name": "Base", "pay_type": "salary", "rate": 60000.0, "pay_frequency": "monthly"},
     ).get_json()
     base_slip = client.post(
         "/api/payroll/payslips",
@@ -552,7 +560,7 @@ def test_w4_adjustments_reduce_federal_tax(client):
 
     emp_w4 = client.post(
         "/api/payroll/employees",
-        json={
+        json={"business_id": biz, 
             "name": "W4",
             "pay_type": "salary",
             "rate": 60000.0,
@@ -570,14 +578,14 @@ def test_w4_adjustments_reduce_federal_tax(client):
     assert w4_slip["federal_tax"] < base_slip["federal_tax"]
 
 
-def test_ytd_recalculated_on_payslip_update_and_delete(client):
+def test_ytd_recalculated_on_payslip_update_and_delete(client, biz):
     emp = client.post(
         "/api/payroll/employees",
-        json={"name": "YTD Test", "pay_type": "hourly", "rate": 100.0},
+        json={"business_id": biz, "name": "YTD Test", "pay_type": "hourly", "rate": 100.0},
     ).get_json()
     period = client.post(
         "/api/payroll/pay-periods",
-        json={"start_date": "2026-01-01", "end_date": "2026-01-14"},
+        json={"business_id": biz, "start_date": "2026-01-01", "end_date": "2026-01-14"},
     ).get_json()
     slip = client.post(
         "/api/payroll/payslips",
@@ -597,7 +605,7 @@ def test_ytd_recalculated_on_payslip_update_and_delete(client):
     # A new payslip in the same year should compute taxes with zero YTD.
     period2 = client.post(
         "/api/payroll/pay-periods",
-        json={"start_date": "2026-01-15", "end_date": "2026-01-28"},
+        json={"business_id": biz, "start_date": "2026-01-15", "end_date": "2026-01-28"},
     ).get_json()
     slip2 = client.post(
         "/api/payroll/payslips",
@@ -611,12 +619,12 @@ def test_ytd_recalculated_on_payslip_update_and_delete(client):
 # --------------------------------------------------------------------------- #
 
 
-def test_tax_deduction_reduces_net_pay(client):
+def test_tax_deduction_reduces_net_pay(client, biz):
     emp = client.post(
         "/api/payroll/employees",
-        json={"name": "Taxed", "pay_type": "hourly", "rate": 20.0},
+        json={"business_id": biz, "name": "Taxed", "pay_type": "hourly", "rate": 20.0},
     ).get_json()
-    period = _make_period(client, "2026-03-01", "2026-03-14")
+    period = _make_period(client, biz, "2026-03-01", "2026-03-14")
     resp = client.post(
         "/api/payroll/payslips",
         json={
@@ -640,14 +648,14 @@ def test_tax_deduction_reduces_net_pay(client):
     assert abs(body["net_pay"] - expected_net) < 0.01
 
 
-def test_december_period_paid_in_january_uses_pay_date_year(client):
+def test_december_period_paid_in_january_uses_pay_date_year(client, biz):
     emp = client.post(
         "/api/payroll/employees",
-        json={"name": "YearEnd", "pay_type": "hourly", "rate": 20.0},
+        json={"business_id": biz, "name": "YearEnd", "pay_type": "hourly", "rate": 20.0},
     ).get_json()
     resp = client.post(
         "/api/payroll/pay-periods",
-        json={
+        json={"business_id": biz, 
             "start_date": "2026-12-20",
             "end_date": "2026-12-31",
             "pay_date": "2027-01-05",
@@ -676,10 +684,10 @@ def test_december_period_paid_in_january_uses_pay_date_year(client):
     assert years == [2027]
 
 
-def test_out_of_order_payslips_recompute_taxes(client):
+def test_out_of_order_payslips_recompute_taxes(client, biz):
     emp = client.post(
         "/api/payroll/employees",
-        json={
+        json={"business_id": biz, 
             "name": "High Earner",
             "pay_type": "salary",
             "rate": 400000.0,
@@ -692,7 +700,7 @@ def test_out_of_order_payslips_recompute_taxes(client):
     for i in range(12):
         start = (base + timedelta(days=14 * i)).strftime("%Y-%m-%d")
         end = (base + timedelta(days=14 * (i + 1) - 1)).strftime("%Y-%m-%d")
-        periods.append(_make_period(client, start, end))
+        periods.append(_make_period(client, biz, start, end))
 
     for period in reversed(periods):
         resp = client.post(
@@ -702,7 +710,7 @@ def test_out_of_order_payslips_recompute_taxes(client):
         assert resp.status_code == 201
 
     slips = [
-        client.get(f"/api/payroll/payslips?employee_id={emp['id']}&period_id={p['id']}").get_json()[0]
+        client.get(f"/api/payroll/payslips?employee_id={emp['id']}&period_id={p['id']}&business_id={biz}").get_json()[0]
         for p in periods
     ]
     total_fica = sum(s["fica_tax"] for s in slips)
@@ -713,30 +721,30 @@ def test_out_of_order_payslips_recompute_taxes(client):
 
 
 @pytest.mark.parametrize("bad_date", ["2026-99-99", "2026-02-30", "2027-02-29"])
-def test_invalid_calendar_dates_rejected(client, bad_date):
+def test_invalid_calendar_dates_rejected(client, biz, bad_date):
     resp = client.post(
         "/api/payroll/pay-periods",
-        json={"start_date": "2026-01-01", "end_date": bad_date},
+        json={"business_id": biz, "start_date": "2026-01-01", "end_date": bad_date},
     )
     assert resp.status_code == 400
     assert "error" in resp.get_json()
 
 
-def test_leap_day_accepted(client):
+def test_leap_day_accepted(client, biz):
     resp = client.post(
         "/api/payroll/pay-periods",
-        json={"start_date": "2028-02-15", "end_date": "2028-02-29"},
+        json={"business_id": biz, "start_date": "2028-02-15", "end_date": "2028-02-29"},
     )
     assert resp.status_code == 201
 
 
 @pytest.mark.parametrize("deductions", [[None], ["x"]])
-def test_malformed_deduction_items_return_400(client, deductions):
+def test_malformed_deduction_items_return_400(client, biz, deductions):
     emp = client.post(
         "/api/payroll/employees",
-        json={"name": "Deductions", "pay_type": "hourly", "rate": 20.0},
+        json={"business_id": biz, "name": "Deductions", "pay_type": "hourly", "rate": 20.0},
     ).get_json()
-    period = _make_period(client, "2026-03-01", "2026-03-14")
+    period = _make_period(client, biz, "2026-03-01", "2026-03-14")
     resp = client.post(
         "/api/payroll/payslips",
         json={
@@ -775,29 +783,37 @@ def test_register_cannot_self_assign_admin(app):
 
 
 def test_viewer_cannot_mutate_payroll(app):
-    client = app.test_client()
-    client.post(
+    admin = app.test_client()
+    admin.post(
         "/api/auth/register",
         json={"username": "admin", "password": "pw", "role": "admin"},
     )
-    client.post("/api/auth/login", json={"username": "admin", "password": "pw"})
-    resp = client.post(
+    admin.post("/api/auth/login", json={"username": "admin", "password": "pw"})
+    resp = admin.post(
         "/api/auth/register",
         json={"username": "viewer", "password": "pw", "role": "viewer"},
     )
     assert resp.status_code == 201
-    client.post("/api/auth/logout")
+    biz = admin.post(
+        "/api/entities/businesses", json={"legal_name": "Biz"}
+    ).get_json()["id"]
+    resp = admin.post(
+        f"/api/entities/businesses/{biz}/access",
+        json={"user_id": 2, "role": "viewer"},
+    )
+    assert resp.status_code == 201
 
-    client.post("/api/auth/login", json={"username": "viewer", "password": "pw"})
+    viewer = app.test_client()
+    viewer.post("/api/auth/login", json={"username": "viewer", "password": "pw"})
 
-    assert client.get("/api/payroll/employees").status_code == 200
-    resp = client.post(
+    assert viewer.get(f"/api/payroll/employees?business_id={biz}").status_code == 200
+    resp = viewer.post(
         "/api/payroll/employees",
-        json={"name": "Nope", "pay_type": "hourly", "rate": 10.0},
+        json={"business_id": biz, "name": "Nope", "pay_type": "hourly", "rate": 10.0},
     )
     assert resp.status_code == 403
 
-    resp = client.post("/api/payroll/assistant", json={"message": "list employees"})
+    resp = viewer.post("/api/payroll/assistant", json={"business_id": biz, "message": "list employees"})
     assert resp.status_code != 403
 
 

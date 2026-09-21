@@ -23,12 +23,17 @@ def test_dashboard_overview_returns_zero_counts_for_empty_database(client):
 
 
 def test_dashboard_reflects_payroll_activity(client):
+    biz = client.post("/api/entities/businesses", json={
+        "legal_name": "Payroll Co",
+    }).get_json()["id"]
     employee = client.post("/api/payroll/employees", json={
+        "business_id": biz,
         "name": "Jane Doe", "position": "Engineer", "pay_type": "salary",
         "pay_frequency": "biweekly", "rate": 60000, "state": "CA",
         "filing_status": "single",
     }).get_json()
     period = client.post("/api/payroll/pay-periods", json={
+        "business_id": biz,
         "start_date": "2026-01-01", "end_date": "2026-01-14", "pay_date": "2026-01-15",
     }).get_json()
     response = client.post("/api/payroll/payslips", json={

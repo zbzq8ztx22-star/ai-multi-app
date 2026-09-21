@@ -8,6 +8,7 @@ import re
 import sqlite3
 from pathlib import Path
 
+import pytest
 from flask import Flask
 
 from payroll.db import SCHEMA, init_db
@@ -249,6 +250,7 @@ def _seed_old_accounting(db_path: Path) -> None:
 def test_upgrade_oldest_payroll_schema_preserves_data(tmp_path):
     db_path = tmp_path / "old.db"
     _seed_old_payroll(db_path)
+    _seed_businesses(db_path, ["Acme LLC"])
 
     _run_init(db_path)
     conn = _connect(db_path)
@@ -268,6 +270,7 @@ def test_upgrade_oldest_payroll_schema_preserves_data(tmp_path):
 def test_upgrade_adds_every_current_table_and_column(tmp_path):
     db_path = tmp_path / "old.db"
     _seed_old_payroll(db_path)
+    _seed_businesses(db_path, ["Acme LLC"])
     _run_init(db_path)
     conn = _connect(db_path)
 
@@ -323,6 +326,7 @@ def test_upgrade_adds_1099_and_group_columns(tmp_path):
 def test_migrations_recorded_and_idempotent(tmp_path):
     db_path = tmp_path / "old.db"
     _seed_old_payroll(db_path)
+    _seed_businesses(db_path, ["Acme LLC"])
 
     _run_init(db_path)
     conn = _connect(db_path)
@@ -393,6 +397,184 @@ def test_migration_8_backfill_is_fail_closed(tmp_path):
         conn.execute("SELECT COUNT(*) FROM user_business_access").fetchone()[0]
         == 1
     )
+
+
+def _seed_businesses(db_path: Path, names: list[str]) -> None:
+    """Add a businesses table with the given legal names to an existing db."""
+    conn = _connect(db_path)
+    conn.executescript(
+        """CREATE TABLE IF NOT EXISTS businesses (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    legal_name TEXT NOT NULL,
+    dba_name TEXT NOT NULL DEFAULT '',
+    entity_type TEXT NOT NULL CHECK(entity_type IN ('sole_proprietorship', 'llc', 'partnership', 's_corp', 'c_corp', 'nonprofit')),
+    ein_last4 TEXT NOT NULL DEFAULT '',
+    formation_state TEXT NOT NULL DEFAULT '',
+    fiscal_year_end TEXT NOT NULL DEFAULT '12-31',
+    accounting_method TEXT NOT NULL DEFAULT 'cash' CHECK(accounting_method IN ('cash', 'accrual')),
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);"""
+    )
+    for name in names:
+        conn.execute(
+            "INSERT INTO businesses (legal_name, entity_type, created_at,"
+            " updated_at) VALUES (?, 'llc', '2026-01-01', '2026-01-01')",
+            (name,),
+        )
+    conn.commit()
+    conn.close()
+
+
+def test_migration_9_scopes_payroll_to_single_business(tmp_path):
+    """A single-business database keeps its payroll inside that business."""
+    db_path = tmp_path / "old.db"
+    _seed_old_payroll(db_path)
+    _seed_businesses(db_path, ["Acme LLC"])
+
+    _run_init(db_path)
+    conn = _connect(db_path)
+
+    employee = conn.execute("SELECT * FROM employees").fetchone()
+    assert employee["business_id"] == 1
+    period = conn.execute("SELECT * FROM pay_periods").fetchone()
+    assert period["business_id"] == 1
+    # No extra business was invented for the upgrade.
+    assert conn.execute("SELECT COUNT(*) FROM businesses").fetchone()[0] == 1
+    # The rebuild enforces NOT NULL like a fresh install.
+    assert _table_columns(conn, "employees")["business_id"]["notnull"] == 1
+    assert _table_columns(conn, "pay_periods")["business_id"]["notnull"] == 1
+    # Payslip data survived the parent rebuilds.
+    assert conn.execute("SELECT COUNT(*) FROM payslips").fetchone()[0] == 1
+
+
+def test_migration_9_creates_migrated_business_when_ambiguous(tmp_path):
+    """Zero or several businesses: payroll moves to a dedicated business and
+    only global admins get owner access (fail-closed, like migration 8)."""
+    db_path = tmp_path / "old.db"
+    _seed_old_payroll(db_path)
+    _seed_businesses(db_path, ["Acme LLC", "Other Corp"])
+    conn = _connect(db_path)
+    conn.execute(
+        """CREATE TABLE users (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    username TEXT NOT NULL UNIQUE,
+    password_hash TEXT NOT NULL,
+    role TEXT NOT NULL DEFAULT 'viewer' CHECK(role IN ('admin', 'viewer')),
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+)"""
+    )
+    conn.execute(
+        "INSERT INTO users (username, password_hash, role, created_at,"
+        " updated_at) VALUES ('boss', 'x', 'admin', '2026-01-01', '2026-01-01')"
+    )
+    conn.execute(
+        "INSERT INTO users (username, password_hash, role, created_at,"
+        " updated_at) VALUES ('clerk', 'x', 'viewer', '2026-01-01', '2026-01-01')"
+    )
+    conn.commit()
+    conn.close()
+
+    _run_init(db_path)
+    conn = _connect(db_path)
+
+    migrated = conn.execute(
+        "SELECT * FROM businesses WHERE legal_name = 'Migrated Payroll'"
+    ).fetchone()
+    assert migrated is not None
+    employee = conn.execute("SELECT * FROM employees").fetchone()
+    assert employee["business_id"] == migrated["id"]
+
+    grants = conn.execute(
+        "SELECT user_id, role FROM user_business_access WHERE business_id = ?",
+        (migrated["id"],),
+    ).fetchall()
+    assert [(g["user_id"], g["role"]) for g in grants] == [(1, "owner")]
+    # The pre-existing businesses are untouched by payroll rows.
+    assert conn.execute(
+        "SELECT COUNT(*) FROM employees WHERE business_id != ?",
+        (migrated["id"],),
+    ).fetchone()[0] == 0
+
+
+def test_migration_9_fails_closed_without_admin(tmp_path):
+    """Ambiguous legacy payroll with zero admin users: the migration aborts
+    loudly instead of creating an ownerless 'Migrated Payroll' business."""
+    db_path = tmp_path / "old.db"
+    _seed_old_payroll(db_path)
+    _seed_businesses(db_path, ["Acme LLC", "Other Corp"])
+    conn = _connect(db_path)
+    conn.execute(
+        """CREATE TABLE users (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    username TEXT NOT NULL UNIQUE,
+    password_hash TEXT NOT NULL,
+    role TEXT NOT NULL DEFAULT 'viewer' CHECK(role IN ('admin', 'viewer')),
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+)"""
+    )
+    conn.execute(
+        "INSERT INTO users (username, password_hash, role, created_at,"
+        " updated_at) VALUES ('clerk', 'x', 'viewer', '2026-01-01', '2026-01-01')"
+    )
+    conn.commit()
+    conn.close()
+
+    with pytest.raises(RuntimeError, match="no admin user"):
+        _run_init(db_path)
+
+    conn = _connect(db_path)
+    # The transaction rolled back: no Migrated Payroll business exists.
+    assert conn.execute(
+        "SELECT COUNT(*) FROM businesses WHERE legal_name = 'Migrated Payroll'"
+    ).fetchone()[0] == 0
+    assert conn.execute("SELECT COUNT(*) FROM businesses").fetchone()[0] == 2
+    # Original payroll rows survived untouched and still unscoped.
+    assert conn.execute("SELECT COUNT(*) FROM employees").fetchone()[0] == 1
+    assert conn.execute("SELECT COUNT(*) FROM pay_periods").fetchone()[0] == 1
+    assert conn.execute("SELECT COUNT(*) FROM payslips").fetchone()[0] == 1
+    assert "business_id" not in _table_columns(conn, "employees")
+    assert "business_id" not in _table_columns(conn, "pay_periods")
+    # Version 9 was not recorded as applied.
+    versions = {
+        row["version"]
+        for row in conn.execute(f"SELECT version FROM {MIGRATIONS_TABLE}")
+    }
+    assert 9 not in versions
+
+    # Once an admin exists, the same database upgrades cleanly.
+    conn.execute(
+        "INSERT INTO users (username, password_hash, role, created_at,"
+        " updated_at) VALUES ('boss', 'x', 'admin', '2026-01-01', '2026-01-01')"
+    )
+    conn.commit()
+    conn.close()
+    _run_init(db_path)
+    conn = _connect(db_path)
+    migrated = conn.execute(
+        "SELECT id FROM businesses WHERE legal_name = 'Migrated Payroll'"
+    ).fetchone()
+    assert migrated is not None
+    assert conn.execute("SELECT business_id FROM employees").fetchone()[
+        "business_id"
+    ] == migrated["id"]
+
+
+def test_migration_9_is_idempotent(tmp_path):
+    db_path = tmp_path / "old.db"
+    _seed_old_payroll(db_path)
+    _seed_businesses(db_path, ["Acme LLC"])
+
+    _run_init(db_path)
+    _run_init(db_path)
+    conn = _connect(db_path)
+
+    assert conn.execute("SELECT COUNT(*) FROM businesses").fetchone()[0] == 1
+    assert conn.execute("SELECT COUNT(*) FROM employees").fetchone()[0] == 1
+    employee = conn.execute("SELECT * FROM employees").fetchone()
+    assert employee["business_id"] == 1
 
 
 def test_fresh_install_ends_at_latest_version(tmp_path):
