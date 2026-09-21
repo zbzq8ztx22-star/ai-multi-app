@@ -1030,17 +1030,36 @@ def _add_months(d: datetime.date, months: int) -> datetime.date:
     return d.replace(year=year, month=month, day=day)
 
 
-def _advance_date(date_str: str, frequency: str) -> str:
-    d = datetime.date.fromisoformat(date_str)
+_RECURRENCE_MONTH_STEPS = {"monthly": 1, "quarterly": 3, "yearly": 12}
+
+
+def _recurrence_occurrence(start: datetime.date, frequency: str, n: int) -> datetime.date:
+    """Nth scheduled occurrence (0-based) computed from the original
+    start_date anchor, so a clamped month never shifts the schedule."""
     if frequency == "weekly":
-        d += datetime.timedelta(weeks=1)
-    elif frequency == "monthly":
-        d = _add_months(d, 1)
-    elif frequency == "quarterly":
-        d = _add_months(d, 3)
-    elif frequency == "yearly":
-        d = _add_months(d, 12)
-    return d.isoformat()
+        return start + datetime.timedelta(weeks=n)
+    return _add_months(start, n * _RECURRENCE_MONTH_STEPS[frequency])
+
+
+def _iter_occurrences(start_date: str, frequency: str, first: str | None = None):
+    """Yield scheduled occurrence dates (ISO strings) anchored to the
+    original start_date. When `first` is given, iteration begins at the
+    first occurrence on or after that date."""
+    start = datetime.date.fromisoformat(start_date)
+    n = 0
+    if first is not None:
+        first_d = datetime.date.fromisoformat(first)
+        if first_d > start:
+            if frequency == "weekly":
+                n = (first_d - start).days // 7
+            else:
+                step = _RECURRENCE_MONTH_STEPS[frequency]
+                n = ((first_d.year - start.year) * 12 + (first_d.month - start.month)) // step * step
+            while _recurrence_occurrence(start, frequency, n) < first_d:
+                n += 1
+    while True:
+        yield _recurrence_occurrence(start, frequency, n).isoformat()
+        n += 1
 
 
 def list_recurring_expenses(business_id: int) -> list[dict[str, Any]]:
@@ -1158,27 +1177,29 @@ def post_due_recurring_expenses(business_id: int, as_of: str | None = None) -> l
             (business_id, as_of),
         ).fetchall()
         for row in rows:
-            expense_data = {
-                "business_id": business_id,
-                "vendor_id": row["vendor_id"],
-                "expense_date": row["next_date"],
-                "reference": f"RECUR-{row['id']}",
-                "description": row["description"],
-                "amount": row["amount"],
-                "expense_account_id": row["expense_account_id"],
-                "payment_account_id": row["payment_account_id"],
-            }
-            # Same connection: the expense insert, its journal entry and the
-            # next_date advance below all commit or roll back together.
-            _create_expense(conn, expense_data)
-            next_date = _advance_date(row["next_date"], row["frequency"])
-            if row["end_date"] and next_date > row["end_date"]:
-                conn.execute("UPDATE recurring_expenses SET active = 0, last_posted_date = ?, next_date = ?, updated_at = ? WHERE id = ?",
-                             (row["next_date"], next_date, now_utc(), row["id"]))
-            else:
-                conn.execute("UPDATE recurring_expenses SET last_posted_date = ?, next_date = ?, updated_at = ? WHERE id = ?",
-                             (row["next_date"], next_date, now_utc(), row["id"]))
-            posted.append(row_to_dict(row))
+            # Catch up every overdue occurrence, anchored to start_date so a
+            # clamped month (e.g. Jan 31 -> Feb 28) does not shift the schedule.
+            occurrences = _iter_occurrences(row["start_date"], row["frequency"], first=row["next_date"])
+            occ = next(occurrences)
+            last_posted = None
+            while occ <= as_of and (row["end_date"] is None or occ <= row["end_date"]):
+                expense = _create_expense(conn, {
+                    "business_id": business_id,
+                    "vendor_id": row["vendor_id"],
+                    "expense_date": occ,
+                    "reference": f"RECUR-{row['id']}",
+                    "description": row["description"],
+                    "amount": row["amount"],
+                    "expense_account_id": row["expense_account_id"],
+                    "payment_account_id": row["payment_account_id"],
+                })
+                posted.append(expense)
+                last_posted = occ
+                occ = next(occurrences)
+            if last_posted is not None:
+                active = 0 if row["end_date"] and occ > row["end_date"] else 1
+                conn.execute("UPDATE recurring_expenses SET last_posted_date = ?, next_date = ?, active = ?, updated_at = ? WHERE id = ?",
+                             (last_posted, occ, active, now_utc(), row["id"]))
         conn.commit()
     return posted
 
@@ -2666,6 +2687,22 @@ def cash_flow_forecast(business_id: int, months: int = 3) -> dict[str, Any]:
             """SELECT * FROM recurring_expenses WHERE business_id = ? AND active = 1""",
             (business_id,),
         ).fetchall()
+        # Project every scheduled recurring occurrence into its forecast month
+        # using the same anchored generator as posting. Occurrences overdue
+        # before the first forecast month count in month 0 (they are due now).
+        month_0 = today.replace(day=1)
+        horizon_end = _add_months(month_0, months) - datetime.timedelta(days=1)
+        recurring_outflows = [0.0] * months
+        for rec in recurring_rows:
+            rec = row_to_dict(rec)
+            for occ_str in _iter_occurrences(rec["start_date"], rec["frequency"], first=rec["next_date"]):
+                if rec["end_date"] and occ_str > rec["end_date"]:
+                    break
+                occ = datetime.date.fromisoformat(occ_str)
+                if occ > horizon_end:
+                    break
+                idx = (occ.year - month_0.year) * 12 + (occ.month - month_0.month)
+                recurring_outflows[max(0, idx)] += rec["amount"]
         # Build monthly forecast
         forecast: list[dict[str, Any]] = []
         for m in range(months):
@@ -2695,11 +2732,7 @@ def cash_flow_forecast(business_id: int, months: int = 3) -> dict[str, Any]:
                 if month_date <= exp_date.replace(day=1) <= month_end:
                     outflows = round(outflows + exp["amount"], 2)
             # Recurring expenses due in this month
-            for rec in recurring_rows:
-                rec = row_to_dict(rec)
-                next_date = datetime.date.fromisoformat(rec["next_date"]) if rec["next_date"] else None
-                if next_date and month_date <= next_date.replace(day=1) <= month_end:
-                    outflows = round(outflows + rec["amount"], 2)
+            outflows = round(outflows + recurring_outflows[m], 2)
             net = round(inflows - outflows, 2)
             forecast.append({
                 "month": month_key,

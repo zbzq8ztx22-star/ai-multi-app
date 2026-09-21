@@ -1,3 +1,5 @@
+import calendar
+
 from .test_accounting import _account, _business
 
 
@@ -81,9 +83,60 @@ def test_cash_flow_forecast_includes_recurring_expenses(client):
     response = client.get(f"/api/accounting/reports/cash-flow-forecast?business_id={business['id']}")
     assert response.status_code == 200
     result = response.get_json()
-    # The recurring expense's next_date falls in the current forecast month
-    assert result["monthly_forecast"][0]["expected_outflows"] == 2000
-    assert result["total_expected_outflows"] == 2000
+    # A monthly recurring expense appears in every forecast month, not just once
+    assert [m["expected_outflows"] for m in result["monthly_forecast"]] == [2000, 2000, 2000]
+    assert result["total_expected_outflows"] == 6000
+
+
+def test_cash_flow_forecast_recurring_respects_end_date(client):
+    business, cash, receivable, ap, revenue, expense = _setup(client, "EndDate Forecast LLC")
+    import datetime
+    today = datetime.date.today()
+    # Recurrence ends on the last day of the current forecast month
+    month_end = datetime.date(today.year, today.month, calendar.monthrange(today.year, today.month)[1])
+    client.post("/api/accounting/recurring-expenses", json={
+        "business_id": business["id"], "description": "Rent", "amount": 2000,
+        "expense_account_id": expense["id"], "payment_account_id": cash["id"],
+        "frequency": "monthly", "start_date": today.isoformat(), "end_date": month_end.isoformat(),
+    })
+    result = client.get(f"/api/accounting/reports/cash-flow-forecast?business_id={business['id']}").get_json()
+    assert [m["expected_outflows"] for m in result["monthly_forecast"]] == [2000, 0, 0]
+
+
+def test_cash_flow_forecast_includes_overdue_recurring(client):
+    business, cash, receivable, ap, revenue, expense = _setup(client, "Overdue Forecast LLC")
+    import datetime
+    # Recurrence started two months ago and was never posted: every missed
+    # occurrence is an overdue obligation counted in the first forecast month
+    today = datetime.date.today()
+    month = today.month - 2
+    year = today.year + (month - 1) // 12
+    month = ((month - 1) % 12) + 1
+    start = datetime.date(year, month, 1)
+    client.post("/api/accounting/recurring-expenses", json={
+        "business_id": business["id"], "description": "Rent", "amount": 2000,
+        "expense_account_id": expense["id"], "payment_account_id": cash["id"],
+        "frequency": "monthly", "start_date": start.isoformat(),
+    })
+    result = client.get(f"/api/accounting/reports/cash-flow-forecast?business_id={business['id']}").get_json()
+    outflows = [m["expected_outflows"] for m in result["monthly_forecast"]]
+    # Month 0 carries the 2 overdue occurrences plus this month's; then one per month
+    assert outflows == [6000, 2000, 2000]
+
+
+def test_cash_flow_forecast_recurring_weekly(client):
+    business, cash, receivable, ap, revenue, expense = _setup(client, "Weekly Forecast LLC")
+    import datetime
+    today = datetime.date.today()
+    client.post("/api/accounting/recurring-expenses", json={
+        "business_id": business["id"], "description": "Cleaning", "amount": 100,
+        "expense_account_id": expense["id"], "payment_account_id": cash["id"],
+        "frequency": "weekly", "start_date": today.isoformat(),
+    })
+    result = client.get(f"/api/accounting/reports/cash-flow-forecast?business_id={business['id']}&months=1").get_json()
+    days_left = calendar.monthrange(today.year, today.month)[1] - today.day
+    expected = 100 * (1 + days_left // 7)
+    assert result["monthly_forecast"][0]["expected_outflows"] == expected
 
 
 def test_cash_flow_forecast_custom_months(client):
