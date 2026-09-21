@@ -139,6 +139,49 @@ def test_cash_flow_forecast_recurring_weekly(client):
     assert result["monthly_forecast"][0]["expected_outflows"] == expected
 
 
+def test_cash_flow_forecast_quarterly_after_next_date_advanced(client):
+    business, cash, receivable, ap, revenue, expense = _setup(client, "Qtr Forecast LLC")
+    import datetime
+    today = datetime.date.today()
+    client.post("/api/accounting/recurring-expenses", json={
+        "business_id": business["id"], "description": "Retainer", "amount": 5000,
+        "expense_account_id": expense["id"], "payment_account_id": cash["id"],
+        "frequency": "quarterly", "start_date": today.isoformat(),
+    })
+    # Post the first occurrence so next_date is three months out
+    client.post(f"/api/accounting/recurring-expenses/post-due?business_id={business['id']}&as_of={today.isoformat()}")
+    recs = client.get(f"/api/accounting/recurring-expenses?business_id={business['id']}").get_json()
+    next_date = datetime.date.fromisoformat(recs[0]["next_date"])
+    assert (next_date.year - today.year) * 12 + (next_date.month - today.month) == 3
+    result = client.get(f"/api/accounting/reports/cash-flow-forecast?business_id={business['id']}&months=6").get_json()
+    # Forecast begins at the persisted next_date: nothing in months 0-2, the
+    # next quarterly occurrence lands in month 3, and no month is skipped
+    assert [m["expected_outflows"] for m in result["monthly_forecast"]] == [0, 0, 0, 5000, 0, 0]
+
+
+def test_cash_flow_forecast_yearly_leap_after_next_date_advanced(client):
+    business, cash, receivable, ap, revenue, expense = _setup(client, "Leap Forecast LLC")
+    import datetime
+    today = datetime.date.today()
+    client.post("/api/accounting/recurring-expenses", json={
+        "business_id": business["id"], "description": "Lease", "amount": 3000,
+        "expense_account_id": expense["id"], "payment_account_id": cash["id"],
+        "frequency": "yearly", "start_date": "2024-02-29",
+    })
+    client.post(f"/api/accounting/recurring-expenses/post-due?business_id={business['id']}&as_of=2024-03-01")
+    recs = client.get(f"/api/accounting/recurring-expenses?business_id={business['id']}").get_json()
+    assert recs[0]["next_date"] == "2025-02-28"
+    result = client.get(f"/api/accounting/reports/cash-flow-forecast?business_id={business['id']}&months=12").get_json()
+    # Occurrences resume at 2025-02-28 — the forecast must not jump years ahead
+    expected = [0.0] * 12
+    for occ in ("2025-02-28", "2026-02-28", "2027-02-28", "2028-02-29"):
+        d = datetime.date.fromisoformat(occ)
+        idx = (d.year - today.year) * 12 + (d.month - today.month)
+        if idx < 12:
+            expected[max(0, idx)] += 3000
+    assert [m["expected_outflows"] for m in result["monthly_forecast"]] == expected
+
+
 def test_cash_flow_forecast_custom_months(client):
     business = _business(client, "Custom Months LLC")
     result = client.get(f"/api/accounting/reports/cash-flow-forecast?business_id={business['id']}&months=6").get_json()

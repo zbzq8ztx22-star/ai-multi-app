@@ -1054,7 +1054,9 @@ def _iter_occurrences(start_date: str, frequency: str, first: str | None = None)
                 n = (first_d - start).days // 7
             else:
                 step = _RECURRENCE_MONTH_STEPS[frequency]
-                n = ((first_d.year - start.year) * 12 + (first_d.month - start.month)) // step * step
+                # n is the occurrence index — _recurrence_occurrence already
+                # multiplies it by step, so do not apply step twice here.
+                n = ((first_d.year - start.year) * 12 + (first_d.month - start.month)) // step
             while _recurrence_occurrence(start, frequency, n) < first_d:
                 n += 1
     while True:

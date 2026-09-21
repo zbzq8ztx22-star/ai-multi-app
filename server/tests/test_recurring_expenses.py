@@ -214,6 +214,43 @@ def test_post_due_leap_year_anchor_preserved(client):
     assert recs[0]["next_date"] == "2029-02-28"
 
 
+def test_post_due_quarterly_resume_no_skip(client):
+    business, cash, expense = _setup(client, "Quarterly Resume LLC")
+    client.post("/api/accounting/recurring-expenses", json={"business_id": business["id"], "description": "Retainer", "amount": 5000, "expense_account_id": expense["id"], "payment_account_id": cash["id"], "frequency": "quarterly", "start_date": "2026-01-31"})
+    r1 = client.post(f"/api/accounting/recurring-expenses/post-due?business_id={business['id']}&as_of=2026-02-15").get_json()
+    assert r1["posted_count"] == 1
+    recs = client.get(f"/api/accounting/recurring-expenses?business_id={business['id']}").get_json()
+    assert recs[0]["next_date"] == "2026-04-30"
+    # Second run resumes at the persisted next_date without skipping occurrences
+    r2 = client.post(f"/api/accounting/recurring-expenses/post-due?business_id={business['id']}&as_of=2026-08-01").get_json()
+    assert r2["posted_count"] == 2
+    expenses = client.get(f"/api/accounting/expenses?business_id={business['id']}").get_json()
+    assert [e["expense_date"] for e in expenses] == ["2026-07-31", "2026-04-30", "2026-01-31"]
+    recs = client.get(f"/api/accounting/recurring-expenses?business_id={business['id']}").get_json()
+    assert recs[0]["next_date"] == "2026-10-31"
+
+
+def test_post_due_yearly_leap_resume(client):
+    business, cash, expense = _setup(client, "Leap Resume LLC")
+    client.post("/api/accounting/recurring-expenses", json={"business_id": business["id"], "description": "Lease", "amount": 3000, "expense_account_id": expense["id"], "payment_account_id": cash["id"], "frequency": "yearly", "start_date": "2024-02-29"})
+    r1 = client.post(f"/api/accounting/recurring-expenses/post-due?business_id={business['id']}&as_of=2024-03-01").get_json()
+    assert r1["posted_count"] == 1
+    recs = client.get(f"/api/accounting/recurring-expenses?business_id={business['id']}").get_json()
+    assert recs[0]["next_date"] == "2025-02-28"
+    # Resume must start exactly at 2025-02-28, not jump years ahead
+    r2 = client.post(f"/api/accounting/recurring-expenses/post-due?business_id={business['id']}&as_of=2026-03-01").get_json()
+    assert r2["posted_count"] == 2
+    recs = client.get(f"/api/accounting/recurring-expenses?business_id={business['id']}").get_json()
+    assert recs[0]["next_date"] == "2027-02-28"
+    # A later run recovers the Feb-29 anchor in the leap year
+    r3 = client.post(f"/api/accounting/recurring-expenses/post-due?business_id={business['id']}&as_of=2028-03-15").get_json()
+    assert r3["posted_count"] == 2
+    expenses = client.get(f"/api/accounting/expenses?business_id={business['id']}").get_json()
+    assert [e["expense_date"] for e in expenses] == ["2028-02-29", "2027-02-28", "2026-02-28", "2025-02-28", "2024-02-29"]
+    recs = client.get(f"/api/accounting/recurring-expenses?business_id={business['id']}").get_json()
+    assert recs[0]["next_date"] == "2029-02-28"
+
+
 def test_recurring_isolated_per_business(client):
     first, cash1, exp1 = _setup(client, "First LLC")
     second, cash2, exp2 = _setup(client, "Second LLC")
