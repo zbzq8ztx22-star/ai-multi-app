@@ -334,6 +334,13 @@ def tenant_guard() -> Any:
         # OPTIONS preflights carry no cookies.
         return None
 
+    # The session only carries the user id; if the user no longer exists the
+    # session is invalid regardless of any leftover access grants.
+    with get_db() as conn:
+        if conn.execute("SELECT 1 FROM users WHERE id = ?", (user_id,)).fetchone() is None:
+            session.clear()
+            return jsonify({"error": "Unauthorized"}), 401
+
     # The payroll assistant is read-only despite being a POST endpoint.
     min_role = (
         "viewer"

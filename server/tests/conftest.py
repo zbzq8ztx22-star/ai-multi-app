@@ -9,6 +9,7 @@ os.environ["FLASK_DEBUG"] = "0"
 os.environ["CORS_ORIGINS"] = "*"
 os.environ["SECRET_KEY"] = "test-secret-key"
 os.environ["SESSION_COOKIE_SECURE"] = "0"
+os.environ["ALLOW_REGISTRATION"] = "1"
 
 from app import create_app
 
