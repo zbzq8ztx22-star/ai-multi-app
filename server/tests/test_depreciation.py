@@ -83,6 +83,63 @@ def test_create_depreciation_asset_invalid_method(client):
     assert response.status_code == 400
 
 
+def test_post_depreciation_second_posting_is_incremental(client):
+    business, asset, accum, dep = _setup(client, "Incremental LLC")
+    asset_data = client.post("/api/accounting/depreciation-assets", json={"business_id": business["id"], "name": "Server", "asset_account_id": asset["id"], "accumulated_account_id": accum["id"], "depreciation_account_id": dep["id"], "cost": 1200, "salvage_value": 0, "useful_life_months": 12, "method": "straight_line", "acquisition_date": "2026-01-01", "start_date": "2026-01-01"}).get_json()
+    # First posting covers Jan-Mar (3 months x 100)
+    r1 = client.post(f"/api/accounting/depreciation-assets/{asset_data['id']}/post", json={"through_date": "2026-03-31"}).get_json()
+    assert r1["posted"] is True
+    assert r1["amount"] == 300
+    # Second posting must only cover Apr-Jun, not re-post the cumulative total
+    r2 = client.post(f"/api/accounting/depreciation-assets/{asset_data['id']}/post", json={"through_date": "2026-06-30"}).get_json()
+    assert r2["posted"] is True
+    assert r2["amount"] == 300
+    register = client.get(f"/api/accounting/reports/fixed-asset-register?business_id={business['id']}").get_json()
+    assert register["assets"][0]["accumulated_depreciation"] == 600
+    tb = client.get(f"/api/accounting/trial-balance?business_id={business['id']}").get_json()
+    assert tb["balanced"] is True
+
+
+def test_post_depreciation_same_period_does_not_duplicate(client):
+    business, asset, accum, dep = _setup(client, "No Dup LLC")
+    asset_data = client.post("/api/accounting/depreciation-assets", json={"business_id": business["id"], "name": "Server", "asset_account_id": asset["id"], "accumulated_account_id": accum["id"], "depreciation_account_id": dep["id"], "cost": 1200, "salvage_value": 0, "useful_life_months": 12, "method": "straight_line", "acquisition_date": "2026-01-01", "start_date": "2026-01-01"}).get_json()
+    client.post(f"/api/accounting/depreciation-assets/{asset_data['id']}/post", json={"through_date": "2026-03-31"})
+    response = client.post(f"/api/accounting/depreciation-assets/{asset_data['id']}/post", json={"through_date": "2026-03-31"})
+    assert response.status_code == 400
+    register = client.get(f"/api/accounting/reports/fixed-asset-register?business_id={business['id']}").get_json()
+    assert register["assets"][0]["accumulated_depreciation"] == 300
+
+
+def test_register_accumulated_depreciation_is_per_asset(client):
+    business, asset, accum, dep = _setup(client, "Shared Accum LLC")
+    a = client.post("/api/accounting/depreciation-assets", json={"business_id": business["id"], "name": "Server", "asset_account_id": asset["id"], "accumulated_account_id": accum["id"], "depreciation_account_id": dep["id"], "cost": 1200, "salvage_value": 0, "useful_life_months": 12, "method": "straight_line", "acquisition_date": "2026-01-01", "start_date": "2026-01-01"}).get_json()
+    b = client.post("/api/accounting/depreciation-assets", json={"business_id": business["id"], "name": "Furniture", "asset_account_id": asset["id"], "accumulated_account_id": accum["id"], "depreciation_account_id": dep["id"], "cost": 2400, "salvage_value": 0, "useful_life_months": 12, "method": "straight_line", "acquisition_date": "2026-01-01", "start_date": "2026-01-01"}).get_json()
+    # Only asset A is depreciated; both share the accumulated-depreciation account
+    client.post(f"/api/accounting/depreciation-assets/{a['id']}/post", json={"through_date": "2026-03-31"})
+    register = client.get(f"/api/accounting/reports/fixed-asset-register?business_id={business['id']}").get_json()
+    by_name = {row["name"]: row for row in register["assets"]}
+    assert by_name["Server"]["accumulated_depreciation"] == 300
+    assert by_name["Furniture"]["accumulated_depreciation"] == 0
+    assert by_name["Furniture"]["book_value"] == 2400
+
+
+def test_disposal_uses_only_own_asset_depreciation(client):
+    business, asset, accum, dep = _setup(client, "Disposal Own LLC")
+    gain_loss = _account(client, business["id"], "6100", "Gain/Loss", "expense")
+    a = client.post("/api/accounting/depreciation-assets", json={"business_id": business["id"], "name": "Server", "asset_account_id": asset["id"], "accumulated_account_id": accum["id"], "depreciation_account_id": dep["id"], "cost": 1200, "salvage_value": 0, "useful_life_months": 12, "method": "straight_line", "acquisition_date": "2026-01-01", "start_date": "2026-01-01"}).get_json()
+    b = client.post("/api/accounting/depreciation-assets", json={"business_id": business["id"], "name": "Furniture", "asset_account_id": asset["id"], "accumulated_account_id": accum["id"], "depreciation_account_id": dep["id"], "cost": 2400, "salvage_value": 0, "useful_life_months": 12, "method": "straight_line", "acquisition_date": "2026-01-01", "start_date": "2026-01-01"}).get_json()
+    client.post(f"/api/accounting/depreciation-assets/{a['id']}/post", json={"through_date": "2026-03-31"})
+    # Disposing B must not consume A's 300 of accumulated depreciation
+    result = client.post(f"/api/accounting/depreciation-assets/{b['id']}/dispose", json={
+        "disposal_date": "2026-04-15", "disposal_price": 2400, "gain_loss_account_id": gain_loss["id"],
+    }).get_json()
+    assert result["disposed"] is True
+    assert result["book_value"] == 2400
+    assert result["gain_loss"] == 0
+    tb = client.get(f"/api/accounting/trial-balance?business_id={business['id']}").get_json()
+    assert tb["balanced"] is True
+
+
 def test_depreciation_assets_isolated_per_business(client):
     first, asset1, accum1, dep1 = _setup(client, "First Dep LLC")
     second, asset2, accum2, dep2 = _setup(client, "Second Dep LLC")

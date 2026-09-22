@@ -89,6 +89,83 @@ def test_credit_note_invalid_amount(client):
     assert response.status_code == 400
 
 
+def test_credit_note_cannot_exceed_invoice_balance(client):
+    business, cash, receivable, revenue, _ = _acct_setup(client)
+    customer = client.post("/api/accounting/contacts", json={"business_id": business["id"], "name": "Buyer", "contact_type": "customer"}).get_json()
+    inv = _invoice(client, business["id"], customer["id"], "INV-OB", "2026-01-01", "2026-01-31", 1000, receivable["id"], revenue["id"])
+    response = client.post("/api/accounting/credit-notes", json={
+        "business_id": business["id"], "invoice_id": inv["id"], "credit_number": "CN-OVER",
+        "credit_date": "2026-01-15", "amount": 1500,
+        "receivable_account_id": receivable["id"], "revenue_account_id": revenue["id"],
+    })
+    assert response.status_code == 400
+    assert "balance" in response.get_json()["error"].lower()
+    # Partial credits accumulate: two 600 credits against a 1000 invoice — the second must fail
+    client.post("/api/accounting/credit-notes", json={
+        "business_id": business["id"], "invoice_id": inv["id"], "credit_number": "CN-P1",
+        "credit_date": "2026-01-15", "amount": 600,
+        "receivable_account_id": receivable["id"], "revenue_account_id": revenue["id"],
+    })
+    response = client.post("/api/accounting/credit-notes", json={
+        "business_id": business["id"], "invoice_id": inv["id"], "credit_number": "CN-P2",
+        "credit_date": "2026-01-16", "amount": 600,
+        "receivable_account_id": receivable["id"], "revenue_account_id": revenue["id"],
+    })
+    assert response.status_code == 400
+    inv_detail = client.get(f"/api/accounting/invoices/{inv['id']}").get_json()
+    assert inv_detail["amount_paid"] == 600
+
+
+def test_credit_note_full_balance_marks_invoice_paid(client):
+    business, cash, receivable, revenue, _ = _acct_setup(client)
+    customer = client.post("/api/accounting/contacts", json={"business_id": business["id"], "name": "Buyer", "contact_type": "customer"}).get_json()
+    inv = _invoice(client, business["id"], customer["id"], "INV-FULL", "2026-01-01", "2026-01-31", 1000, receivable["id"], revenue["id"])
+    response = client.post("/api/accounting/credit-notes", json={
+        "business_id": business["id"], "invoice_id": inv["id"], "credit_number": "CN-FULL",
+        "credit_date": "2026-01-15", "amount": 1000,
+        "receivable_account_id": receivable["id"], "revenue_account_id": revenue["id"],
+    })
+    assert response.status_code == 201
+    inv_detail = client.get(f"/api/accounting/invoices/{inv['id']}").get_json()
+    assert inv_detail["amount_paid"] == 1000
+    assert inv_detail["status"] == "paid"
+
+
+def test_credit_note_customer_must_match_invoice(client):
+    business, cash, receivable, revenue, _ = _acct_setup(client)
+    customer_a = client.post("/api/accounting/contacts", json={"business_id": business["id"], "name": "Buyer A", "contact_type": "customer"}).get_json()
+    customer_b = client.post("/api/accounting/contacts", json={"business_id": business["id"], "name": "Buyer B", "contact_type": "customer"}).get_json()
+    inv = _invoice(client, business["id"], customer_a["id"], "INV-CUST", "2026-01-01", "2026-01-31", 1000, receivable["id"], revenue["id"])
+    response = client.post("/api/accounting/credit-notes", json={
+        "business_id": business["id"], "invoice_id": inv["id"], "customer_id": customer_b["id"],
+        "credit_number": "CN-MISMATCH", "credit_date": "2026-01-15", "amount": 200,
+        "receivable_account_id": receivable["id"], "revenue_account_id": revenue["id"],
+    })
+    assert response.status_code == 400
+    assert "customer" in response.get_json()["error"].lower()
+    cns = client.get(f"/api/accounting/credit-notes?business_id={business['id']}").get_json()
+    assert len(cns) == 0
+
+
+def test_void_credit_note_restores_invoice_balance_and_status(client):
+    business, cash, receivable, revenue, _ = _acct_setup(client)
+    customer = client.post("/api/accounting/contacts", json={"business_id": business["id"], "name": "Buyer", "contact_type": "customer"}).get_json()
+    inv = _invoice(client, business["id"], customer["id"], "INV-VR", "2026-01-01", "2026-01-31", 1000, receivable["id"], revenue["id"])
+    cn = client.post("/api/accounting/credit-notes", json={
+        "business_id": business["id"], "invoice_id": inv["id"], "credit_number": "CN-VR",
+        "credit_date": "2026-01-15", "amount": 1000,
+        "receivable_account_id": receivable["id"], "revenue_account_id": revenue["id"],
+    }).get_json()
+    assert client.get(f"/api/accounting/invoices/{inv['id']}").get_json()["status"] == "paid"
+    response = client.put(f"/api/accounting/credit-notes/{cn['id']}/void?business_id={business['id']}")
+    assert response.status_code == 200
+    inv_detail = client.get(f"/api/accounting/invoices/{inv['id']}").get_json()
+    assert inv_detail["amount_paid"] == 0
+    assert inv_detail["status"] == "open"
+    tb = client.get(f"/api/accounting/trial-balance?business_id={business['id']}").get_json()
+    assert tb["balanced"] is True
+
+
 def test_credit_notes_isolated_per_business(client):
     first, cash1, rec1, rev1, _ = _acct_setup(client)
     second = _business(client, "Second CN LLC")

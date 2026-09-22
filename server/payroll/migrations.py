@@ -320,6 +320,30 @@ def _m009_payroll_business_scope(conn: sqlite3.Connection) -> None:
     )
 
 
+def _m010_journal_entries_depreciation_asset(conn: sqlite3.Connection) -> None:
+    """Link depreciation journal entries to their asset.
+
+    Adds ``depreciation_asset_id`` to journal_entries so per-asset
+    depreciation can be computed without aggregating the shared
+    accumulated-depreciation account across unrelated assets. Entries
+    created before this column existed are backfilled from their
+    ``DEP-<asset_id>`` reference convention.
+    """
+    if not table_exists(conn, "journal_entries"):
+        return
+    add_column(conn, "journal_entries", "depreciation_asset_id", "INTEGER")
+    conn.execute(
+        "UPDATE journal_entries"
+        " SET depreciation_asset_id = CAST(SUBSTR(reference, 5) AS INTEGER)"
+        " WHERE depreciation_asset_id IS NULL"
+        " AND reference GLOB 'DEP-[0-9]*'"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_entries_depreciation_asset"
+        " ON journal_entries(depreciation_asset_id)"
+    )
+
+
 MIGRATIONS: list[Migration] = [
     Migration(1, "employees_pay_frequency", _m001_employees_pay_frequency),
     Migration(2, "employee_w4_fields", _m002_employee_w4_fields),
@@ -330,6 +354,7 @@ MIGRATIONS: list[Migration] = [
     Migration(7, "expense_approval", _m007_expense_approval),
     Migration(8, "user_business_access", _m008_user_business_access),
     Migration(9, "payroll_business_scope", _m009_payroll_business_scope),
+    Migration(10, "journal_entries_depreciation_asset", _m010_journal_entries_depreciation_asset),
 ]
 
 LATEST_VERSION = MIGRATIONS[-1].version

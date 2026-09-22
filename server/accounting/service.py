@@ -196,7 +196,7 @@ def _account_for_business(conn: sqlite3.Connection, business_id: int, account_id
     return account_id
 
 
-def _post_operation_entry(conn: sqlite3.Connection, business_id: int, entry_date: str, reference: str, description: str, lines: list[tuple[int, float, float]]) -> int:
+def _post_operation_entry(conn: sqlite3.Connection, business_id: int, entry_date: str, reference: str, description: str, lines: list[tuple[int, float, float]], depreciation_asset_id: int | None = None) -> int:
     """Single funnel for operation-generated posted journal entries.
 
     Enforces the closed-period invariant here so no caller can post into a
@@ -206,8 +206,8 @@ def _post_operation_entry(conn: sqlite3.Connection, business_id: int, entry_date
         raise ValueError("Cannot post to a closed accounting period")
     now = now_utc()
     cursor = conn.execute(
-        "INSERT INTO journal_entries (business_id, entry_date, reference, description, status, created_at, updated_at) VALUES (?, ?, ?, ?, 'posted', ?, ?)",
-        (business_id, entry_date, reference, description, now, now),
+        "INSERT INTO journal_entries (business_id, entry_date, reference, description, status, depreciation_asset_id, created_at, updated_at) VALUES (?, ?, ?, ?, 'posted', ?, ?, ?)",
+        (business_id, entry_date, reference, description, depreciation_asset_id, now, now),
     )
     entry_id = cursor.lastrowid
     conn.executemany(
@@ -1609,6 +1609,12 @@ def create_credit_note(data: dict[str, Any]) -> dict[str, Any]:
                 raise ValueError("Invoice not found for this business")
             if customer_id is None:
                 customer_id = inv["customer_id"]
+            elif int(customer_id) != inv["customer_id"]:
+                raise ValueError("Credit note customer does not match the invoice customer")
+            # A credit note may not exceed the remaining invoice balance
+            balance = round(inv["amount"] - inv["amount_paid"], 2)
+            if amount > balance:
+                raise ValueError("Credit note amount exceeds the remaining invoice balance")
         # Validate customer if provided
         if customer_id is not None:
             cust = conn.execute("SELECT * FROM accounting_contacts WHERE id = ? AND business_id = ?", (customer_id, business_id)).fetchone()
@@ -1620,10 +1626,13 @@ def create_credit_note(data: dict[str, Any]) -> dict[str, Any]:
             f"Credit note {credit_number}",
             [(revenue_account_id, amount, 0), (receivable_account_id, 0, amount)],
         )
-        # If linked to invoice, reduce invoice amount
+        # If linked to invoice, apply the credit and mark it paid when the
+        # remaining balance reaches zero
         if invoice_id is not None:
-            conn.execute("UPDATE invoices SET amount_paid = amount_paid + ?, updated_at = ? WHERE id = ?",
-                         (amount, now, invoice_id))
+            new_paid = round(inv["amount_paid"] + amount, 2)
+            new_status = "paid" if new_paid >= inv["amount"] else inv["status"]
+            conn.execute("UPDATE invoices SET amount_paid = ?, status = ?, updated_at = ? WHERE id = ?",
+                         (new_paid, new_status, now, invoice_id))
         try:
             cursor = conn.execute(
                 "INSERT INTO credit_notes (business_id, invoice_id, customer_id, credit_number, credit_date, amount, reason, receivable_account_id, revenue_account_id, journal_entry_id, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'applied', ?, ?)",
@@ -1650,10 +1659,15 @@ def void_credit_note(business_id: int, credit_id: int) -> dict[str, Any]:
             f"Void credit note {row['credit_number']}",
             [(row["receivable_account_id"], row["amount"], 0), (row["revenue_account_id"], 0, row["amount"])],
         )
-        # If linked to invoice, reverse the amount_paid reduction
+        # If linked to invoice, reverse the applied credit and reopen the
+        # invoice when the remaining balance becomes positive again
         if row["invoice_id"] is not None:
-            conn.execute("UPDATE invoices SET amount_paid = MAX(amount_paid - ?, 0), updated_at = ? WHERE id = ?",
-                         (row["amount"], now, row["invoice_id"]))
+            inv = conn.execute("SELECT amount, amount_paid, status FROM invoices WHERE id = ?", (row["invoice_id"],)).fetchone()
+            if inv is not None:
+                new_paid = round(max(inv["amount_paid"] - row["amount"], 0), 2)
+                new_status = "open" if inv["status"] == "paid" and new_paid < inv["amount"] else inv["status"]
+                conn.execute("UPDATE invoices SET amount_paid = ?, status = ?, updated_at = ? WHERE id = ?",
+                             (new_paid, new_status, now, row["invoice_id"]))
         conn.execute("UPDATE credit_notes SET status = 'void', updated_at = ? WHERE id = ?", (now, credit_id))
         conn.commit()
         return get_credit_note_detail(business_id, credit_id)
@@ -1817,18 +1831,33 @@ def post_depreciation(asset_id: int, through_date: str) -> dict[str, Any]:
                 break
         if total_dep <= 0:
             raise ValueError("No depreciation to post for this period")
+        # Only the incremental amount is posted: entries already linked to
+        # this asset define what has been depreciated so far, so re-posting
+        # the same period never duplicates depreciation.
+        posted_rows = conn.execute(
+            """SELECT COALESCE(SUM(jl.debit), 0) AS posted
+               FROM journal_lines jl
+               JOIN journal_entries je ON je.id = jl.entry_id
+               WHERE je.depreciation_asset_id = ? AND je.status = 'posted'
+               AND jl.account_id = ?""",
+            (asset_id, asset["depreciation_account_id"]),
+        ).fetchone()
+        incremental = round(total_dep - round(posted_rows["posted"], 2), 2)
+        if incremental <= 0:
+            raise ValueError("No depreciation to post for this period")
         now = now_utc()
         # Create journal entry: debit depreciation expense, credit accumulated depreciation
         entry_id = _post_operation_entry(
             conn, asset["business_id"], through_date, f"DEP-{asset['id']}",
             f"Depreciation for {asset['name']}",
-            [(asset["depreciation_account_id"], total_dep, 0), (asset["accumulated_account_id"], 0, total_dep)],
+            [(asset["depreciation_account_id"], incremental, 0), (asset["accumulated_account_id"], 0, incremental)],
+            depreciation_asset_id=asset_id,
         )
         # Check if fully depreciated
         if total_dep >= (asset["cost"] - asset["salvage_value"]):
             conn.execute("UPDATE depreciation_assets SET status = 'fully_depreciated', updated_at = ? WHERE id = ?", (now, asset_id))
         conn.commit()
-        return {"posted": True, "amount": total_dep, "entry_id": entry_id}
+        return {"posted": True, "amount": incremental, "entry_id": entry_id}
 
 
 def budget_variance_alerts(business_id: int, fiscal_year: int, threshold_percent: float = 80.0) -> dict[str, Any]:
@@ -2570,14 +2599,17 @@ def fixed_asset_register(business_id: int) -> dict[str, Any]:
         total_book_value = 0.0
         for row in rows:
             asset = row_to_dict(row)
-            # Calculate accumulated depreciation from posted entries
+            # Calculate accumulated depreciation from entries linked to this
+            # asset only — sharing an accumulated-depreciation account must not
+            # aggregate depreciation across unrelated assets.
             dep_rows = conn.execute(
                 """SELECT COALESCE(SUM(jl.credit - jl.debit), 0) AS accumulated
                    FROM journal_lines jl
                    JOIN journal_entries je ON je.id = jl.entry_id
                    WHERE je.business_id = ? AND je.status = 'posted'
+                   AND je.depreciation_asset_id = ?
                    AND jl.account_id = ?""",
-                (business_id, asset["accumulated_account_id"]),
+                (business_id, asset["id"], asset["accumulated_account_id"]),
             ).fetchone()
             accumulated_dep = round(dep_rows["accumulated"], 2)
             book_value = round(asset["cost"] - accumulated_dep, 2)
@@ -2621,14 +2653,16 @@ def dispose_fixed_asset(asset_id: int, disposal_date: str, disposal_price: float
         acct = conn.execute("SELECT id FROM accounts WHERE id = ? AND business_id = ?", (gain_loss_account_id, asset["business_id"])).fetchone()
         if acct is None:
             raise ValueError("Gain/loss account not found for this business")
-        # Calculate accumulated depreciation
+        # Calculate accumulated depreciation — only entries belonging to this
+        # asset, so disposal never consumes another asset's depreciation.
         dep_rows = conn.execute(
             """SELECT COALESCE(SUM(jl.credit - jl.debit), 0) AS accumulated
                FROM journal_lines jl
                JOIN journal_entries je ON je.id = jl.entry_id
                WHERE je.business_id = ? AND je.status = 'posted'
+               AND je.depreciation_asset_id = ?
                AND jl.account_id = ?""",
-            (asset["business_id"], asset["accumulated_account_id"]),
+            (asset["business_id"], asset_id, asset["accumulated_account_id"]),
         ).fetchone()
         accumulated_dep = round(dep_rows["accumulated"], 2)
         book_value = round(asset["cost"] - accumulated_dep, 2)
