@@ -144,9 +144,12 @@ def register() -> Any:
         return jsonify({"error": "Registration is disabled"}), 403
 
     # Public registration is only open while bootstrapping the very first
-    # user, or when the deployment explicitly enables it.
+    # user, or when the deployment explicitly enables it. Authenticated
+    # admins may always create users through this endpoint.
     user_count = _user_count()
-    if user_count > 0 and not _env_flag("ALLOW_REGISTRATION", False):
+    caller = current_user()
+    caller_is_admin = caller is not None and caller["role"] == "admin"
+    if user_count > 0 and not caller_is_admin and not _env_flag("ALLOW_REGISTRATION", False):
         return jsonify({"error": "Registration is disabled"}), 403
 
     creds = _extract_credentials(request)
@@ -161,8 +164,7 @@ def register() -> Any:
 
     # Elevated roles may only be assigned when bootstrapping the very first
     # user or by a logged-in admin; anyone can register as a viewer.
-    caller = current_user()
-    if role != "viewer" and user_count > 0 and (caller is None or caller["role"] != "admin"):
+    if role != "viewer" and user_count > 0 and not caller_is_admin:
         return jsonify({"error": "Only admins can assign roles"}), 403
 
     if get_user_by_username(username) is not None:
@@ -174,19 +176,17 @@ def register() -> Any:
 
 _LOGIN_MAX_FAILURES = 5
 _LOGIN_WINDOW_SECONDS = 300
-# (remote_addr, username) -> timestamps of recent failed attempts
-_login_failures: dict[tuple[str, str], list[float]] = {}
 
 
-def _login_rate_limited(key: tuple[str, str]) -> bool:
-    now = time.time()
-    attempts = [t for t in _login_failures.get(key, []) if now - t < _LOGIN_WINDOW_SECONDS]
-    _login_failures[key] = attempts
-    return len(attempts) >= _LOGIN_MAX_FAILURES
-
-
-def _record_login_failure(key: tuple[str, str]) -> None:
-    _login_failures.setdefault(key, []).append(time.time())
+def _login_rate_limited(conn: Any, remote_addr: str, username: str, now: float) -> bool:
+    # Expired rows are pruned on every attempt so the table stays bounded
+    # instead of accumulating stale (ip, username) pairs in memory.
+    conn.execute("DELETE FROM login_attempts WHERE attempted_at < ?", (now - _LOGIN_WINDOW_SECONDS,))
+    row = conn.execute(
+        "SELECT COUNT(*) AS c FROM login_attempts WHERE remote_addr = ? AND username = ?",
+        (remote_addr, username),
+    ).fetchone()
+    return row["c"] >= _LOGIN_MAX_FAILURES
 
 
 @bp.route("/login", methods=["POST"])
@@ -196,15 +196,29 @@ def login() -> Any:
         return jsonify({"error": "Username and password are required"}), 400
     username, password = creds
 
-    key = (request.remote_addr or "", username)
-    if _login_rate_limited(key):
-        return jsonify({"error": "Too many login attempts; try again later"}), 429
+    remote_addr = request.remote_addr or ""
+    now = time.time()
+    with get_db() as conn:
+        # Attempts live in the shared database, so the limit applies across
+        # processes/workers and not just within one in-memory map.
+        if _login_rate_limited(conn, remote_addr, username, now):
+            conn.commit()
+            return jsonify({"error": "Too many login attempts; try again later"}), 429
 
-    user = get_user_by_username(username)
-    if user is None or not check_password_hash(user["password_hash"], password):
-        _record_login_failure(key)
-        return jsonify({"error": "Invalid credentials"}), 401
-    _login_failures.pop(key, None)
+        row = conn.execute("SELECT * FROM users WHERE username = ?", (username,)).fetchone()
+        if row is None or not check_password_hash(row["password_hash"], password):
+            conn.execute(
+                "INSERT INTO login_attempts (remote_addr, username, attempted_at) VALUES (?, ?, ?)",
+                (remote_addr, username, now),
+            )
+            conn.commit()
+            return jsonify({"error": "Invalid credentials"}), 401
+        conn.execute(
+            "DELETE FROM login_attempts WHERE remote_addr = ? AND username = ?",
+            (remote_addr, username),
+        )
+        conn.commit()
+        user = _row_to_dict(row)
 
     session["user_id"] = user["id"]
     session["username"] = user["username"]

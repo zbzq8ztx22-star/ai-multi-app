@@ -110,6 +110,15 @@ CREATE TABLE IF NOT EXISTS users (
 
 CREATE INDEX IF NOT EXISTS idx_users_username ON users(username);
 
+CREATE TABLE IF NOT EXISTS login_attempts (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    remote_addr TEXT NOT NULL,
+    username TEXT NOT NULL,
+    attempted_at REAL NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_login_attempts_key ON login_attempts(remote_addr, username, attempted_at);
+
 CREATE TABLE IF NOT EXISTS user_business_access (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     user_id INTEGER NOT NULL,

@@ -129,6 +129,17 @@ def test_registration_explicitly_enabled(app, monkeypatch):
     assert anon.post("/api/auth/register", json={"username": "second", "password": "pw"}).status_code == 201
 
 
+def test_admin_can_create_users_when_registration_closed(client, monkeypatch):
+    # The admin "Add user" flow uses /register; closing public registration
+    # must not block an authenticated administrator.
+    monkeypatch.delenv("ALLOW_REGISTRATION", raising=False)
+    resp = client.post("/api/auth/register", json={"username": "staff", "password": "pw"})
+    assert resp.status_code == 201
+    resp = client.post("/api/auth/register", json={"username": "staff2", "password": "pw", "role": "admin"})
+    assert resp.status_code == 201
+    assert resp.get_json()["role"] == "admin"
+
+
 def test_disable_registration_env_blocks_bootstrap(app, monkeypatch):
     monkeypatch.setenv("DISABLE_REGISTRATION", "1")
     monkeypatch.setenv("ALLOW_REGISTRATION", "1")
