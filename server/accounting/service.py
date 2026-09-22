@@ -1588,33 +1588,32 @@ def create_credit_note(data: dict[str, Any]) -> dict[str, Any]:
     customer_id = data.get("customer_id")
     receivable_account_id = data.get("receivable_account_id")
     revenue_account_id = data.get("revenue_account_id")
-    if receivable_account_id is None or revenue_account_id is None:
-        raise ValueError("receivable_account_id and revenue_account_id are required")
-    receivable_account_id = int(receivable_account_id)
-    revenue_account_id = int(revenue_account_id)
     now = now_utc()
     with get_db() as conn:
         _require_business(conn, business_id)
         if _is_period_closed(conn, business_id, credit_date):
             raise ValueError("Cannot post to a closed accounting period")
-        # Validate accounts
-        for aid in (receivable_account_id, revenue_account_id):
-            acct = conn.execute("SELECT * FROM accounts WHERE id = ? AND business_id = ?", (aid, business_id)).fetchone()
-            if acct is None:
-                raise ValueError("Account not found for this business")
-        # Validate invoice if provided
         if invoice_id is not None:
             inv = conn.execute("SELECT * FROM invoices WHERE id = ? AND business_id = ?", (invoice_id, business_id)).fetchone()
             if inv is None:
                 raise ValueError("Invoice not found for this business")
+            if inv["status"] != "open":
+                raise ValueError("Credit notes can only be applied to open invoices")
             if customer_id is None:
                 customer_id = inv["customer_id"]
             elif int(customer_id) != inv["customer_id"]:
                 raise ValueError("Credit note customer does not match the invoice customer")
+            # Linked credit notes reverse the invoice's own accounts;
+            # caller-supplied account ids are ignored
+            receivable_account_id = inv["receivable_account_id"]
+            revenue_account_id = inv["revenue_account_id"]
             # A credit note may not exceed the remaining invoice balance
             balance = round(inv["amount"] - inv["amount_paid"], 2)
             if amount > balance:
                 raise ValueError("Credit note amount exceeds the remaining invoice balance")
+        else:
+            receivable_account_id = _account_for_business(conn, business_id, receivable_account_id, {"asset"}, "receivable_account_id")
+            revenue_account_id = _account_for_business(conn, business_id, revenue_account_id, {"revenue"}, "revenue_account_id")
         # Validate customer if provided
         if customer_id is not None:
             cust = conn.execute("SELECT * FROM accounting_contacts WHERE id = ? AND business_id = ?", (customer_id, business_id)).fetchone()

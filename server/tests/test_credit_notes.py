@@ -166,6 +166,90 @@ def test_void_credit_note_restores_invoice_balance_and_status(client):
     assert tb["balanced"] is True
 
 
+def test_credit_note_rejected_on_void_invoice(client):
+    business, cash, receivable, revenue, _ = _acct_setup(client)
+    customer = client.post("/api/accounting/contacts", json={"business_id": business["id"], "name": "Buyer", "contact_type": "customer"}).get_json()
+    inv = _invoice(client, business["id"], customer["id"], "INV-VOID1", "2026-01-01", "2026-01-31", 1000, receivable["id"], revenue["id"])
+    assert client.put(f"/api/accounting/invoices/{inv['id']}/void").status_code == 200
+    tb_before = client.get(f"/api/accounting/trial-balance?business_id={business['id']}").get_json()
+    response = client.post("/api/accounting/credit-notes", json={
+        "business_id": business["id"], "invoice_id": inv["id"], "credit_number": "CN-VP",
+        "credit_date": "2026-01-20", "amount": 400,
+        "receivable_account_id": receivable["id"], "revenue_account_id": revenue["id"],
+    })
+    assert response.status_code == 400
+    inv_detail = client.get(f"/api/accounting/invoices/{inv['id']}").get_json()
+    assert inv_detail["status"] == "void"
+    assert inv_detail["amount_paid"] == 0
+    assert client.get(f"/api/accounting/credit-notes?business_id={business['id']}").get_json() == []
+    tb_after = client.get(f"/api/accounting/trial-balance?business_id={business['id']}").get_json()
+    assert tb_after["total_debits"] == tb_before["total_debits"]
+    assert tb_after["total_credits"] == tb_before["total_credits"]
+    assert tb_after["balanced"] is True
+
+
+def test_credit_note_full_balance_rejected_on_void_invoice(client):
+    business, cash, receivable, revenue, _ = _acct_setup(client)
+    customer = client.post("/api/accounting/contacts", json={"business_id": business["id"], "name": "Buyer", "contact_type": "customer"}).get_json()
+    inv = _invoice(client, business["id"], customer["id"], "INV-VOID2", "2026-01-01", "2026-01-31", 1000, receivable["id"], revenue["id"])
+    assert client.put(f"/api/accounting/invoices/{inv['id']}/void").status_code == 200
+    response = client.post("/api/accounting/credit-notes", json={
+        "business_id": business["id"], "invoice_id": inv["id"], "credit_number": "CN-VF",
+        "credit_date": "2026-01-20", "amount": 1000,
+        "receivable_account_id": receivable["id"], "revenue_account_id": revenue["id"],
+    })
+    assert response.status_code == 400
+    inv_detail = client.get(f"/api/accounting/invoices/{inv['id']}").get_json()
+    assert inv_detail["status"] == "void"
+    assert inv_detail["amount_paid"] == 0
+    assert client.get(f"/api/accounting/credit-notes?business_id={business['id']}").get_json() == []
+    tb = client.get(f"/api/accounting/trial-balance?business_id={business['id']}").get_json()
+    assert tb["balanced"] is True
+
+
+def test_linked_credit_note_uses_invoice_accounts(client):
+    business, cash, receivable, revenue, _ = _acct_setup(client)
+    other_ar = _account(client, business["id"], "1110", "AR Other", "asset")
+    other_rev = _account(client, business["id"], "4100", "Other Revenue", "revenue")
+    customer = client.post("/api/accounting/contacts", json={"business_id": business["id"], "name": "Buyer", "contact_type": "customer"}).get_json()
+    inv = _invoice(client, business["id"], customer["id"], "INV-ACCT", "2026-01-01", "2026-01-31", 1000, receivable["id"], revenue["id"])
+    # Caller-supplied accounts that differ from the invoice's are ignored;
+    # the reversal must post against the invoice's own accounts
+    response = client.post("/api/accounting/credit-notes", json={
+        "business_id": business["id"], "invoice_id": inv["id"], "credit_number": "CN-ACCT",
+        "credit_date": "2026-01-15", "amount": 400,
+        "receivable_account_id": other_ar["id"], "revenue_account_id": other_rev["id"],
+    })
+    assert response.status_code == 201
+    cn = response.get_json()
+    assert cn["receivable_account_id"] == receivable["id"]
+    assert cn["revenue_account_id"] == revenue["id"]
+    inv_detail = client.get(f"/api/accounting/invoices/{inv['id']}").get_json()
+    assert inv_detail["amount_paid"] == 400
+    tb = client.get(f"/api/accounting/trial-balance?business_id={business['id']}").get_json()
+    assert tb["balanced"] is True
+    by_id = {row["id"]: row for row in tb["accounts"]}
+    assert by_id[other_ar["id"]]["debits"] == 0
+    assert by_id[other_ar["id"]]["credits"] == 0
+    assert by_id[other_rev["id"]]["debits"] == 0
+    assert by_id[other_rev["id"]]["credits"] == 0
+    assert by_id[revenue["id"]]["debits"] == 400
+    assert by_id[receivable["id"]]["credits"] == 400
+
+
+def test_unlinked_credit_note_validates_account_types(client):
+    business, cash, receivable, revenue, expense = _acct_setup(client)
+    customer = client.post("/api/accounting/contacts", json={"business_id": business["id"], "name": "Buyer", "contact_type": "customer"}).get_json()
+    base = {"business_id": business["id"], "customer_id": customer["id"], "credit_number": "CN-T1", "credit_date": "2026-01-15", "amount": 100}
+    # receivable must be an asset account
+    response = client.post("/api/accounting/credit-notes", json={**base, "receivable_account_id": expense["id"], "revenue_account_id": revenue["id"]})
+    assert response.status_code == 400
+    # revenue must be a revenue account
+    response = client.post("/api/accounting/credit-notes", json={**base, "receivable_account_id": receivable["id"], "revenue_account_id": cash["id"]})
+    assert response.status_code == 400
+    assert client.get(f"/api/accounting/credit-notes?business_id={business['id']}").get_json() == []
+
+
 def test_credit_notes_isolated_per_business(client):
     first, cash1, rec1, rev1, _ = _acct_setup(client)
     second = _business(client, "Second CN LLC")
