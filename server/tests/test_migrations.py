@@ -577,6 +577,38 @@ def test_migration_9_is_idempotent(tmp_path):
     assert employee["business_id"] == 1
 
 
+def test_migration_10_links_depreciation_entries(tmp_path):
+    db_path = tmp_path / "old.db"
+    _seed_old_accounting(db_path)
+    conn = _connect(db_path)
+    conn.execute(
+        "INSERT INTO journal_entries (business_id, entry_date, reference,"
+        " description, created_at, updated_at) VALUES (1, '2026-02-01', 'DEP-7',"
+        " 'Depreciation for Server', '2026-02-01', '2026-02-01')"
+    )
+    conn.execute(
+        "INSERT INTO journal_entries (business_id, entry_date, reference,"
+        " description, created_at, updated_at) VALUES (1, '2026-02-01', 'INV-9',"
+        " 'Invoice', '2026-02-01', '2026-02-01')"
+    )
+    conn.commit()
+    conn.close()
+
+    _run_init(db_path)
+    conn = _connect(db_path)
+
+    columns = _table_columns(conn, "journal_entries")
+    assert "depreciation_asset_id" in columns
+    dep_entry = conn.execute(
+        "SELECT depreciation_asset_id FROM journal_entries WHERE reference = 'DEP-7'"
+    ).fetchone()
+    assert dep_entry["depreciation_asset_id"] == 7
+    other = conn.execute(
+        "SELECT depreciation_asset_id FROM journal_entries WHERE reference = 'INV-9'"
+    ).fetchone()
+    assert other["depreciation_asset_id"] is None
+
+
 def test_fresh_install_ends_at_latest_version(tmp_path):
     db_path = tmp_path / "fresh.db"
     _run_init(db_path)

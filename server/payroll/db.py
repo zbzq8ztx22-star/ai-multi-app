@@ -236,6 +236,7 @@ CREATE TABLE IF NOT EXISTS journal_entries (
     reference TEXT NOT NULL DEFAULT '',
     description TEXT NOT NULL,
     status TEXT NOT NULL DEFAULT 'posted' CHECK(status IN ('draft', 'posted')),
+    depreciation_asset_id INTEGER,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL,
     FOREIGN KEY (business_id) REFERENCES businesses(id) ON DELETE CASCADE
