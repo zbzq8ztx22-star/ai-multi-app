@@ -560,7 +560,7 @@ def test_w4_adjustments_reduce_federal_tax(client, biz):
 
     emp_w4 = client.post(
         "/api/payroll/employees",
-        json={"business_id": biz, 
+        json={"business_id": biz,
             "name": "W4",
             "pay_type": "salary",
             "rate": 60000.0,
@@ -655,7 +655,7 @@ def test_december_period_paid_in_january_uses_pay_date_year(client, biz):
     ).get_json()
     resp = client.post(
         "/api/payroll/pay-periods",
-        json={"business_id": biz, 
+        json={"business_id": biz,
             "start_date": "2026-12-20",
             "end_date": "2026-12-31",
             "pay_date": "2027-01-05",
@@ -687,7 +687,7 @@ def test_december_period_paid_in_january_uses_pay_date_year(client, biz):
 def test_out_of_order_payslips_recompute_taxes(client, biz):
     emp = client.post(
         "/api/payroll/employees",
-        json={"business_id": biz, 
+        json={"business_id": biz,
             "name": "High Earner",
             "pay_type": "salary",
             "rate": 400000.0,

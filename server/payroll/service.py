@@ -307,7 +307,6 @@ def update_pay_period(period_id: int, data: dict[str, Any]) -> dict[str, Any]:
     old_year = _payslip_year(old_period)
     fields = _period_defaults(data)
     new_year = _payslip_year(fields)
-    now = now_utc()
     with get_db() as conn:
         conn.execute(
             """

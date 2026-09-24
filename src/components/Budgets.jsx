@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { Target, Plus, Trash2 } from 'lucide-react'
-import { apiGet, apiPost, apiPut, apiDelete } from '../api'
+import { apiGet, apiPost, apiDelete } from '../api'
 
 const year = new Date().getFullYear()
 const money = value => Number(value || 0).toLocaleString('en-US', { style: 'currency', currency: 'USD' })

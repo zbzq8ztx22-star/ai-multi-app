@@ -11,6 +11,7 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
+    "lint": "eslint src",
     "server": "python server/app.py",
     "test:backend": "python -m pytest server/tests -q"
   },
@@ -24,6 +25,9 @@
     "@types/react-dom": "^18.2.17",
     "@vitejs/plugin-react": "^6.1.1",
     "autoprefixer": "^10.4.16",
+    "eslint": "^9.39.5",
+    "eslint-plugin-react": "^7.37.5",
+    "globals": "^17.12.0",
     "postcss": "^8.4.32",
     "tailwindcss": "^3.3.6",
     "vite": "^8.2.2"
