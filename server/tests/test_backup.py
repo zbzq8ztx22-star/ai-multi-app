@@ -1,4 +1,3 @@
-import json
 
 from .test_accounting import _account, _business
 

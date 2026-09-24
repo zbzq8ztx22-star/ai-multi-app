@@ -130,7 +130,7 @@ def record_movement(data: dict[str, Any]) -> dict[str, Any]:
         if item is None:
             raise ValueError("Inventory item not found for this business")
         item = row_to_dict(item)
-        # Adjust quantity: purchase/return increases, sale/adjustment can be +/- 
+        # Adjust quantity: purchase/return increases, sale/adjustment can be +/-
         if movement_type in ("purchase", "return"):
             new_qty = item["quantity_on_hand"] + abs(quantity)
         elif movement_type == "sale":
