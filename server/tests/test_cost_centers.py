@@ -1,4 +1,4 @@
-from .test_accounting import _account, _business
+from .test_accounting import _business
 
 
 def _entry_with_cost_center(client, business_id, entry_date, description, lines):

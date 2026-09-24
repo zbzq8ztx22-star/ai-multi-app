@@ -1,0 +1,7 @@
+[bandit]
+exclude = tests
+
+# B608 flags dynamic SQL built from internal constants (table/column names
+# from fixed schema definitions and validated whitelists), never raw user
+# input. Parameter values are always bound via placeholders.
+skips = B608

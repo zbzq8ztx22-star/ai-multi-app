@@ -14,9 +14,6 @@ jobs:
   backend:
     name: Backend tests
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: .
     env:
       SECRET_KEY: ${{ secrets.SECRET_KEY || 'ci-test-secret-key' }}
       OPENEXECUTIVE_API_URL: http://openexec.test
@@ -38,15 +35,47 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r server/requirements-dev.txt
 
-      - name: Run pytest
-        run: python -m pytest server/tests -q
+      - name: Run pytest with coverage
+        run: python -m pytest server/tests -q --cov=server --cov-report=term-missing --cov-report=xml:coverage.xml
 
-  frontend:
-    name: Frontend build
+      - name: Upload coverage report
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage
+          path: coverage.xml
+          if-no-files-found: error
+
+  python-quality:
+    name: Python lint and security
     runs-on: ubuntu-latest
     defaults:
       run:
-        working-directory: .
+        working-directory: server
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-dev.txt
+
+      - name: Ruff
+        run: ruff check .
+
+      # -x ./tests excludes tests; -ll keeps only medium+ severity findings.
+      # .bandit skips B608 (dynamic SQL uses internal constants + placeholders).
+      - name: Bandit
+        run: bandit -r . -x ./tests -ll -q
+
+  frontend:
+    name: Frontend lint and build
+    runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -60,5 +89,25 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Lint
+        run: npm run lint
+
       - name: Build
         run: npm run build
+
+  secrets:
+    name: Secret scanning
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: TruffleHog
+        uses: trufflesecurity/trufflehog@main
+        with:
+          path: ./
+          base: ${{ github.event.repository.default_branch }}
+          head: HEAD
+          extra_args: --only-verified

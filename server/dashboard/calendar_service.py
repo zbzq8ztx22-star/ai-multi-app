@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from payroll.db import get_db, row_to_dict
+from payroll.db import get_db
 
 
 def _require_business(conn, business_id: int) -> None:
