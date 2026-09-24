@@ -193,6 +193,28 @@ def _validate_backup(data: Any) -> tuple[dict[str, Any], dict[str, Any]]:
     if len(tables) > MAX_TABLES:
         raise ValueError("Backup has too many tables")
     source_business_id = business.get("id")
+    expected_tables = {table for table, _ in _TABLE_GRAPH}
+    if version == FORMAT_VERSION:
+        # v2 ties every business-scoped row to business.id — without it the
+        # mixed-business check below would be skipped entirely.
+        if (
+            not isinstance(source_business_id, int)
+            or isinstance(source_business_id, bool)
+            or source_business_id <= 0
+        ):
+            raise ValueError("Backup business.id must be a valid positive integer")
+        # v2 backups must declare every business-scoped table: a missing key
+        # would silently import as empty and lose data. Unknown keys are
+        # rejected too so a misspelled table cannot be dropped unnoticed.
+        missing = expected_tables - set(tables)
+        if missing:
+            raise ValueError(f"Backup is missing required tables: {sorted(missing)}")
+        unknown = set(tables) - expected_tables
+        if unknown:
+            raise ValueError(f"Backup contains unknown tables: {sorted(unknown)}")
+    else:
+        # Legacy v1 exports predate the full graph: unknown keys are ignored.
+        tables = {name: rows for name, rows in tables.items() if name in expected_tables}
     scoped_tables = {table for table, scope in _TABLE_GRAPH if scope == "business"}
     total_rows = 0
     for name, rows in tables.items():

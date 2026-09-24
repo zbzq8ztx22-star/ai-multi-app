@@ -178,6 +178,91 @@ def test_import_owner_with_foreign_employee(client, app):
         assert row["employee_id"] is None
 
 
+def test_v2_import_rejects_missing_table(client, app):
+    business = client.post("/api/entities/businesses", json={"legal_name": "Missing Table Co"}).get_json()
+    with app.app_context(), get_db() as conn:
+        _seed_business(conn, business["id"])
+        conn.commit()
+    export = client.get(f"/api/backup/export/{business['id']}").get_json()
+    before = client.get("/api/entities/businesses").get_json()
+    # Deleting one exported table must not import it as empty.
+    del export["tables"]["employees"]
+    response = client.post("/api/backup/import", json=export)
+    assert response.status_code == 400
+    assert "employees" in response.get_json()["error"]
+    assert len(client.get("/api/entities/businesses").get_json()) == len(before)
+
+
+def test_v2_import_rejects_unknown_table(client, app):
+    business = client.post("/api/entities/businesses", json={"legal_name": "Unknown Table Co"}).get_json()
+    export = client.get(f"/api/backup/export/{business['id']}").get_json()
+    export["tables"]["employes"] = []  # misspelled -> would silently lose employees
+    response = client.post("/api/backup/import", json=export)
+    assert response.status_code == 400
+    assert "employes" in response.get_json()["error"]
+
+
+def test_v1_backup_still_imports(client):
+    # Legacy exports (no format_version) only carried a subset of tables and
+    # remain importable: missing v2 tables are tolerated, unknown keys ignored.
+    legacy = {
+        "business": {"legal_name": "Legacy Co", "dba_name": "", "entity_type": "llc",
+                     "ein_last4": "", "formation_state": "", "fiscal_year_end": "12-31",
+                     "accounting_method": "cash"},
+        "tables": {
+            "accounts": [{"id": 1, "business_id": 9, "code": "1000", "name": "Cash",
+                          "account_type": "asset", "group_id": None, "active": 1,
+                          "created_at": NOW, "updated_at": NOW}],
+            "accounting_contacts": [],
+            "invoices": [], "expenses": [], "budgets": [], "reconciliations": [],
+            "journal_entries": [], "journal_lines": [], "invoice_payments": [],
+            "recurring_expenses": [],
+            "bogus_table": [{"id": 1}],
+        },
+    }
+    response = client.post("/api/backup/import", json=legacy)
+    assert response.status_code == 201
+    new_id = response.get_json()["business_id"]
+    accounts = client.get(f"/api/accounting/accounts?business_id={new_id}").get_json()
+    assert len(accounts) == 1 and accounts[0]["code"] == "1000"
+
+
+def _valid_v2_export(client, app):
+    """Build a real v2 backup from a seeded business."""
+    business = client.post("/api/entities/businesses", json={"legal_name": "ID Check Co"}).get_json()
+    with app.app_context(), get_db() as conn:
+        _seed_business(conn, business["id"])
+        conn.commit()
+    return client.get(f"/api/backup/export/{business['id']}").get_json()
+
+
+def test_v2_import_requires_business_id(client, app):
+    export = _valid_v2_export(client, app)
+    del export["business"]["id"]
+    with app.app_context(), get_db() as conn:
+        biz_before = conn.execute("SELECT COUNT(*) AS c FROM businesses").fetchone()["c"]
+        acct_before = conn.execute("SELECT COUNT(*) AS c FROM accounts").fetchone()["c"]
+    response = client.post("/api/backup/import", json=export)
+    assert response.status_code == 400
+    with app.app_context(), get_db() as conn:
+        assert conn.execute("SELECT COUNT(*) AS c FROM businesses").fetchone()["c"] == biz_before
+        assert conn.execute("SELECT COUNT(*) AS c FROM accounts").fetchone()["c"] == acct_before
+
+
+def test_v2_import_rejects_bad_business_id(client, app):
+    for bad_id in ("1", True, 0, -3, 1.5, [1], None):
+        export = _valid_v2_export(client, app)
+        export["business"]["id"] = bad_id
+        response = client.post("/api/backup/import", json=export)
+        assert response.status_code == 400, bad_id
+
+
+def test_v2_import_with_valid_business_id(client, app):
+    export = _valid_v2_export(client, app)
+    response = client.post("/api/backup/import", json=export)
+    assert response.status_code == 201
+
+
 def test_import_rejects_rows_from_other_business(client, app):
     business = client.post("/api/entities/businesses", json={"legal_name": "Mix Co"}).get_json()
     with app.app_context(), get_db() as conn:
