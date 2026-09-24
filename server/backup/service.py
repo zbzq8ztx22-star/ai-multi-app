@@ -190,6 +190,8 @@ def _validate_backup(data: Any) -> tuple[dict[str, Any], dict[str, Any]]:
     version = data.get("format_version", 1)
     if not isinstance(version, int) or isinstance(version, bool) or version not in SUPPORTED_VERSIONS:
         raise ValueError(f"Unsupported backup format version: {version}")
+    if len(tables) > MAX_TABLES:
+        raise ValueError("Backup has too many tables")
     expected_tables = {table for table, _ in _TABLE_GRAPH}
     if version == FORMAT_VERSION:
         # v2 backups must declare every business-scoped table: a missing key
@@ -204,8 +206,6 @@ def _validate_backup(data: Any) -> tuple[dict[str, Any], dict[str, Any]]:
     else:
         # Legacy v1 exports predate the full graph: unknown keys are ignored.
         tables = {name: rows for name, rows in tables.items() if name in expected_tables}
-    if len(tables) > MAX_TABLES:
-        raise ValueError("Backup has too many tables")
     source_business_id = business.get("id")
     scoped_tables = {table for table, scope in _TABLE_GRAPH if scope == "business"}
     total_rows = 0
