@@ -108,10 +108,12 @@ jobs:
           fetch-depth: 0
 
       # Pinned to the v3.97.9 release commit — never a mutable branch.
+      # No base/head inputs: the action derives the range per event —
+      # push: event.before -> event.after (zero-SHA before -> full history),
+      # pull_request: PR base.sha -> head.sha, dispatch/schedule: whole repo.
+      # Passing fixed inputs made push-to-main resolve BASE == HEAD.
       - name: TruffleHog
         uses: trufflesecurity/trufflehog@4dd8831c5f12599465d4d45c3c447b4018a34c85
         with:
           path: ./
-          base: ${{ github.event.repository.default_branch }}
-          head: HEAD
           extra_args: --only-verified
