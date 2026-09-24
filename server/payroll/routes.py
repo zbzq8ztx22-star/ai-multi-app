@@ -7,6 +7,7 @@ from typing import Any
 from flask import Blueprint, Response, jsonify, request
 
 from access import tenant_guard
+from csv_export import sanitize_csv_field
 
 from . import assistant, service
 
@@ -240,7 +241,10 @@ def payroll_report_csv(period_id: int):
     output = io.StringIO()
     writer = csv.DictWriter(output, fieldnames=fieldnames)
     writer.writeheader()
-    writer.writerows(report["rows"])
+    writer.writerows(
+        {key: sanitize_csv_field(value) for key, value in row.items()}
+        for row in report["rows"]
+    )
     csv_data = output.getvalue()
 
     filename = f"payroll_{report['period']['start_date']}_{report['period']['end_date']}.csv"

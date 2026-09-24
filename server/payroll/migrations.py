@@ -344,6 +344,24 @@ def _m010_journal_entries_depreciation_asset(conn: sqlite3.Connection) -> None:
     )
 
 
+def _m011_login_attempts(conn: sqlite3.Connection) -> None:
+    """Store failed-login attempts in SQLite so the rate limit is shared
+    across processes/workers and expired rows are pruned instead of held
+    in process memory."""
+    conn.execute(
+        """CREATE TABLE IF NOT EXISTS login_attempts (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    remote_addr TEXT NOT NULL,
+    username TEXT NOT NULL,
+    attempted_at REAL NOT NULL
+)"""
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_login_attempts_key"
+        " ON login_attempts(remote_addr, username, attempted_at)"
+    )
+
+
 MIGRATIONS: list[Migration] = [
     Migration(1, "employees_pay_frequency", _m001_employees_pay_frequency),
     Migration(2, "employee_w4_fields", _m002_employee_w4_fields),
@@ -355,6 +373,7 @@ MIGRATIONS: list[Migration] = [
     Migration(8, "user_business_access", _m008_user_business_access),
     Migration(9, "payroll_business_scope", _m009_payroll_business_scope),
     Migration(10, "journal_entries_depreciation_asset", _m010_journal_entries_depreciation_asset),
+    Migration(11, "login_attempts", _m011_login_attempts),
 ]
 
 LATEST_VERSION = MIGRATIONS[-1].version

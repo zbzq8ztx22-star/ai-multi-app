@@ -1,32 +1,22 @@
 from typing import Any, Callable
 
-from flask import Blueprint, Response, jsonify, request, session
+from flask import Blueprint, jsonify, render_template_string, request, session
 
 from audit import service as audit_service
-from auth import login_required
+from auth import get_user_by_id, login_required
 from access import tenant_guard
+from csv_export import csv_response as _csv_response
 from . import service
 
 bp = Blueprint("accounting", __name__, url_prefix="/api/accounting")
 bp.before_request(tenant_guard)
 
 
-def _csv_response(rows: list[list[Any]], filename: str) -> Response:
-    import io
-    import csv
-    output = io.StringIO()
-    writer = csv.writer(output)
-    for row in rows:
-        writer.writerow(row)
-    resp = Response(output.getvalue(), mimetype="text/csv")
-    resp.headers["Content-Disposition"] = f'attachment; filename="{filename}"'
-    return resp
-
-
 def _current_user() -> dict[str, Any] | None:
-    if "user_id" not in session:
+    user_id = session.get("user_id")
+    if user_id is None:
         return None
-    return {"id": session.get("user_id"), "username": session.get("username", ""), "role": session.get("role", "")}
+    return get_user_by_id(user_id)
 
 
 def _json_write(action: Callable[[dict[str, Any]], dict[str, Any]], module_name: str = "accounting", action_name: str = "create") -> Any:
@@ -156,6 +146,52 @@ def void_invoice(invoice_id: int) -> Any:
         return jsonify({"error": str(exc)}), 400
 
 
+_INVOICE_PRINT_TEMPLATE = """<!DOCTYPE html>
+<html><head><meta charset="utf-8"><title>Invoice {{ invoice.invoice_number }}</title>
+<style>
+  body { font-family: Arial, sans-serif; max-width: 800px; margin: 40px auto; padding: 20px; color: #1a1a1a; }
+  .header { display: flex; justify-content: space-between; border-bottom: 2px solid #333; padding-bottom: 20px; }
+  .business-name { font-size: 24px; font-weight: bold; }
+  .invoice-title { font-size: 32px; color: #666; text-align: right; }
+  .details { margin: 30px 0; display: flex; justify-content: space-between; }
+  .label { color: #666; font-size: 12px; text-transform: uppercase; }
+  .value { font-size: 16px; margin-top: 4px; }
+  table { width: 100%; border-collapse: collapse; margin: 20px 0; }
+  th { text-align: left; padding: 10px; border-bottom: 2px solid #333; color: #666; font-size: 12px; text-transform: uppercase; }
+  td { padding: 10px; border-bottom: 1px solid #ddd; }
+  .totals { margin-left: auto; width: 300px; }
+  .totals-row { display: flex; justify-content: space-between; padding: 8px 0; }
+  .total { font-weight: bold; font-size: 18px; border-top: 2px solid #333; padding-top: 10px; }
+  .status { display: inline-block; padding: 4px 12px; border-radius: 4px; font-size: 12px; font-weight: bold; text-transform: uppercase; }
+  .status-open { background: #fef3c7; color: #92400e; }
+  .status-paid { background: #d1fae5; color: #065f46; }
+  .status-void { background: #fee2e2; color: #991b1b; }
+  @media print { .no-print { display: none; } }
+</style></head><body>
+  <div class="no-print" style="text-align:right;margin-bottom:20px"><button onclick="window.print()" style="padding:10px 20px;font-size:14px;cursor:pointer">Print / Save as PDF</button></div>
+  <div class="header">
+    <div><div class="business-name">{{ invoice.business_name }}</div>{% if invoice.business_dba %}<div>{{ invoice.business_dba }}</div>{% endif %}</div>
+    <div class="invoice-title">INVOICE</div>
+  </div>
+  <div class="details">
+    <div><div class="label">Bill To</div><div class="value">{{ invoice.customer_name }}</div>{% if invoice.customer_email %}<div>{{ invoice.customer_email }}</div>{% endif %}</div>
+    <div style="text-align:right">
+      <div class="label">Invoice Number</div><div class="value">{{ invoice.invoice_number }}</div>
+      <div class="label" style="margin-top:10px">Issue Date</div><div class="value">{{ invoice.issue_date }}</div>
+      <div class="label" style="margin-top:10px">Due Date</div><div class="value">{{ invoice.due_date }}</div>
+      <div class="label" style="margin-top:10px">Status</div><div class="value"><span class="status status-{{ invoice.status }}">{{ invoice.status }}</span></div>
+    </div>
+  </div>
+  <table><thead><tr><th>Description</th><th style="text-align:right">Amount</th></tr></thead>
+  <tbody><tr><td>{{ invoice.description }}</td><td style="text-align:right">${{ "{:,.2f}".format(invoice.amount) }}</td></tr></tbody></table>
+  <div class="totals">
+    <div class="totals-row"><span>Subtotal</span><span>${{ "{:,.2f}".format(invoice.amount) }}</span></div>
+    <div class="totals-row"><span>Paid</span><span>${{ "{:,.2f}".format(invoice.amount_paid) }}</span></div>
+    <div class="totals-row total"><span>Balance Due</span><span>${{ "{:,.2f}".format(balance) }}</span></div>
+  </div>
+</body></html>"""
+
+
 @bp.route("/invoices/<int:invoice_id>/print", methods=["GET"])
 @login_required
 def print_invoice(invoice_id: int) -> Any:
@@ -163,51 +199,9 @@ def print_invoice(invoice_id: int) -> Any:
     if invoice is None:
         return jsonify({"error": "Invoice not found"}), 404
     balance = round(invoice["amount"] - invoice["amount_paid"], 2)
-    html = f"""<!DOCTYPE html>
-<html><head><meta charset="utf-8"><title>Invoice {invoice['invoice_number']}</title>
-<style>
-  body {{ font-family: Arial, sans-serif; max-width: 800px; margin: 40px auto; padding: 20px; color: #1a1a1a; }}
-  .header {{ display: flex; justify-content: space-between; border-bottom: 2px solid #333; padding-bottom: 20px; }}
-  .business-name {{ font-size: 24px; font-weight: bold; }}
-  .invoice-title {{ font-size: 32px; color: #666; text-align: right; }}
-  .details {{ margin: 30px 0; display: flex; justify-content: space-between; }}
-  .label {{ color: #666; font-size: 12px; text-transform: uppercase; }}
-  .value {{ font-size: 16px; margin-top: 4px; }}
-  table {{ width: 100%; border-collapse: collapse; margin: 20px 0; }}
-  th {{ text-align: left; padding: 10px; border-bottom: 2px solid #333; color: #666; font-size: 12px; text-transform: uppercase; }}
-  td {{ padding: 10px; border-bottom: 1px solid #ddd; }}
-  .totals {{ margin-left: auto; width: 300px; }}
-  .totals-row {{ display: flex; justify-content: space-between; padding: 8px 0; }}
-  .total {{ font-weight: bold; font-size: 18px; border-top: 2px solid #333; padding-top: 10px; }}
-  .status {{ display: inline-block; padding: 4px 12px; border-radius: 4px; font-size: 12px; font-weight: bold; text-transform: uppercase; }}
-  .status-open {{ background: #fef3c7; color: #92400e; }}
-  .status-paid {{ background: #d1fae5; color: #065f46; }}
-  .status-void {{ background: #fee2e2; color: #991b1b; }}
-  @media print {{ .no-print {{ display: none; }} }}
-</style></head><body>
-  <div class="no-print" style="text-align:right;margin-bottom:20px"><button onclick="window.print()" style="padding:10px 20px;font-size:14px;cursor:pointer">Print / Save as PDF</button></div>
-  <div class="header">
-    <div><div class="business-name">{invoice['business_name']}</div>{f"<div>{invoice['business_dba']}</div>" if invoice.get('business_dba') else ""}</div>
-    <div class="invoice-title">INVOICE</div>
-  </div>
-  <div class="details">
-    <div><div class="label">Bill To</div><div class="value">{invoice['customer_name']}</div>{f"<div>{invoice['customer_email']}</div>" if invoice.get('customer_email') else ""}</div>
-    <div style="text-align:right">
-      <div class="label">Invoice Number</div><div class="value">{invoice['invoice_number']}</div>
-      <div class="label" style="margin-top:10px">Issue Date</div><div class="value">{invoice['issue_date']}</div>
-      <div class="label" style="margin-top:10px">Due Date</div><div class="value">{invoice['due_date']}</div>
-      <div class="label" style="margin-top:10px">Status</div><div class="value"><span class="status status-{invoice['status']}">{invoice['status']}</span></div>
-    </div>
-  </div>
-  <table><thead><tr><th>Description</th><th style="text-align:right">Amount</th></tr></thead>
-  <tbody><tr><td>{invoice['description']}</td><td style="text-align:right">${invoice['amount']:,.2f}</td></tr></tbody></table>
-  <div class="totals">
-    <div class="totals-row"><span>Subtotal</span><span>${invoice['amount']:,.2f}</span></div>
-    <div class="totals-row"><span>Paid</span><span>${invoice['amount_paid']:,.2f}</span></div>
-    <div class="totals-row total"><span>Balance Due</span><span>${balance:,.2f}</span></div>
-  </div>
-</body></html>"""
-    return Response(html, mimetype="text/html")
+    # render_template_string autoescapes every {{ }} interpolation, so stored
+    # values (business name, customer, description, ...) can never inject HTML.
+    return render_template_string(_INVOICE_PRINT_TEMPLATE, invoice=invoice, balance=balance)
 
 
 @bp.route("/payments", methods=["POST"])

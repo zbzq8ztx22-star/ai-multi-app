@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import functools
 import os
+import time
 from typing import Any, Callable
 
 from flask import Blueprint, Request, jsonify, request, session
@@ -68,6 +69,7 @@ def delete_user(user_id: int) -> None:
             raise ValueError(
                 "User is the sole owner of a business; transfer ownership first"
             )
+        conn.execute("DELETE FROM user_business_access WHERE user_id = ?", (user_id,))
         conn.execute("DELETE FROM users WHERE id = ?", (user_id,))
         conn.commit()
 
@@ -89,10 +91,24 @@ def create_user(username: str, password: str, role: str = "viewer") -> dict[str,
         return get_user_by_id(cursor.lastrowid)
 
 
+def current_user() -> dict[str, Any] | None:
+    """Resolve the session's user from persistent storage.
+
+    The session only carries the user id; the role is always read fresh from
+    the database so role changes, revocations and deletions take effect
+    without requiring a new login.
+    """
+    user_id = session.get("user_id")
+    if user_id is None:
+        return None
+    return get_user_by_id(user_id)
+
+
 def login_required(view: Callable[..., Any]) -> Callable[..., Any]:
     @functools.wraps(view)
     def wrapped(*args: Any, **kwargs: Any) -> Any:
-        if "user_id" not in session:
+        if current_user() is None:
+            session.clear()
             return jsonify({"error": "Unauthorized"}), 401
         return view(*args, **kwargs)
 
@@ -102,9 +118,11 @@ def login_required(view: Callable[..., Any]) -> Callable[..., Any]:
 def admin_required(view: Callable[..., Any]) -> Callable[..., Any]:
     @functools.wraps(view)
     def wrapped(*args: Any, **kwargs: Any) -> Any:
-        if "user_id" not in session:
+        user = current_user()
+        if user is None:
+            session.clear()
             return jsonify({"error": "Unauthorized"}), 401
-        if session.get("role") != "admin":
+        if user["role"] != "admin":
             return jsonify({"error": "Forbidden"}), 403
         return view(*args, **kwargs)
 
@@ -125,6 +143,15 @@ def register() -> Any:
     if os.environ.get("DISABLE_REGISTRATION"):
         return jsonify({"error": "Registration is disabled"}), 403
 
+    # Public registration is only open while bootstrapping the very first
+    # user, or when the deployment explicitly enables it. Authenticated
+    # admins may always create users through this endpoint.
+    user_count = _user_count()
+    caller = current_user()
+    caller_is_admin = caller is not None and caller["role"] == "admin"
+    if user_count > 0 and not caller_is_admin and not _env_flag("ALLOW_REGISTRATION", False):
+        return jsonify({"error": "Registration is disabled"}), 403
+
     creds = _extract_credentials(request)
     if creds is None:
         return jsonify({"error": "Username and password are required"}), 400
@@ -137,7 +164,7 @@ def register() -> Any:
 
     # Elevated roles may only be assigned when bootstrapping the very first
     # user or by a logged-in admin; anyone can register as a viewer.
-    if role != "viewer" and _user_count() > 0 and session.get("role") != "admin":
+    if role != "viewer" and user_count > 0 and not caller_is_admin:
         return jsonify({"error": "Only admins can assign roles"}), 403
 
     if get_user_by_username(username) is not None:
@@ -147,6 +174,21 @@ def register() -> Any:
     return jsonify({"id": user["id"], "username": user["username"], "role": user["role"]}), 201
 
 
+_LOGIN_MAX_FAILURES = 5
+_LOGIN_WINDOW_SECONDS = 300
+
+
+def _login_rate_limited(conn: Any, remote_addr: str, username: str, now: float) -> bool:
+    # Expired rows are pruned on every attempt so the table stays bounded
+    # instead of accumulating stale (ip, username) pairs in memory.
+    conn.execute("DELETE FROM login_attempts WHERE attempted_at < ?", (now - _LOGIN_WINDOW_SECONDS,))
+    row = conn.execute(
+        "SELECT COUNT(*) AS c FROM login_attempts WHERE remote_addr = ? AND username = ?",
+        (remote_addr, username),
+    ).fetchone()
+    return row["c"] >= _LOGIN_MAX_FAILURES
+
+
 @bp.route("/login", methods=["POST"])
 def login() -> Any:
     creds = _extract_credentials(request)
@@ -154,9 +196,29 @@ def login() -> Any:
         return jsonify({"error": "Username and password are required"}), 400
     username, password = creds
 
-    user = get_user_by_username(username)
-    if user is None or not check_password_hash(user["password_hash"], password):
-        return jsonify({"error": "Invalid credentials"}), 401
+    remote_addr = request.remote_addr or ""
+    now = time.time()
+    with get_db() as conn:
+        # Attempts live in the shared database, so the limit applies across
+        # processes/workers and not just within one in-memory map.
+        if _login_rate_limited(conn, remote_addr, username, now):
+            conn.commit()
+            return jsonify({"error": "Too many login attempts; try again later"}), 429
+
+        row = conn.execute("SELECT * FROM users WHERE username = ?", (username,)).fetchone()
+        if row is None or not check_password_hash(row["password_hash"], password):
+            conn.execute(
+                "INSERT INTO login_attempts (remote_addr, username, attempted_at) VALUES (?, ?, ?)",
+                (remote_addr, username, now),
+            )
+            conn.commit()
+            return jsonify({"error": "Invalid credentials"}), 401
+        conn.execute(
+            "DELETE FROM login_attempts WHERE remote_addr = ? AND username = ?",
+            (remote_addr, username),
+        )
+        conn.commit()
+        user = _row_to_dict(row)
 
     session["user_id"] = user["id"]
     session["username"] = user["username"]
