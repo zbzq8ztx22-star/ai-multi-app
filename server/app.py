@@ -56,7 +56,7 @@ def create_app(test_config: dict[str, Any] | None = None) -> Flask:
     app = Flask(__name__, static_folder=None)
 
     app.config["MAX_CONTENT_LENGTH"] = int(
-        os.environ.get("MAX_CONTENT_LENGTH", 16 * 1024 * 1024)
+        os.environ.get("MAX_CONTENT_LENGTH", 32 * 1024 * 1024)
     )
 
     app.config["OPENEXECUTIVE_API_URL"] = os.environ.get(

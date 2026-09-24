@@ -26,9 +26,14 @@ def export(business_id: int) -> Any:
     return resp
 
 
+MAX_IMPORT_BYTES = 25 * 1024 * 1024
+
+
 @bp.route("/import", methods=["POST"])
 @admin_required
 def import_data() -> Any:
+    if request.content_length is not None and request.content_length > MAX_IMPORT_BYTES:
+        return jsonify({"error": "Backup file is too large"}), 413
     data = request.get_json(silent=True)
     if not isinstance(data, dict):
         return jsonify({"error": "Request body must be JSON"}), 400
