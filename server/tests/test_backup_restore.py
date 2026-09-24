@@ -149,6 +149,46 @@ def test_import_rejects_unsupported_version(client):
     assert response.status_code == 400
 
 
+def test_import_rejects_malformed_version(client):
+    for bad_version in ([2], {"v": 2}, "2", True, 2.0):
+        response = client.post("/api/backup/import", json={
+            "format_version": bad_version, "business": {"legal_name": "X"}, "tables": {},
+        })
+        assert response.status_code == 400, bad_version
+
+
+def test_import_owner_with_foreign_employee(client, app):
+    source = client.post("/api/entities/businesses", json={"legal_name": "Employer Co"}).get_json()
+    owned = client.post("/api/entities/businesses", json={"legal_name": "Owned Co"}).get_json()
+    with app.app_context(), get_db() as conn:
+        emp = _ins(conn, "INSERT INTO employees (business_id, name, position, pay_type, pay_frequency, rate, state, filing_status, federal_withholding, dependents, other_income, w4_deductions, multiple_jobs, created_at, updated_at) VALUES (?, 'Ana', 'Dev', 'hourly', 'biweekly', 40, 'CA', 'single', 0, 0, 0, 0, 0, ?, ?)", (source["id"], NOW, NOW))
+        taxpayer = _ins(conn, "INSERT INTO taxpayers (employee_id, legal_name, taxpayer_type, filing_status, residence_state, identifier_last4, email, phone, address, created_at, updated_at) VALUES (?, 'Ana T', 'individual', 'single', 'CA', '1234', '', '', '', ?, ?)", (emp, NOW, NOW))
+        conn.execute("INSERT INTO business_owners (business_id, taxpayer_id, ownership_percent) VALUES (?, ?, 100)", (owned["id"], taxpayer))
+        conn.commit()
+    export = client.get(f"/api/backup/export/{owned['id']}").get_json()
+    assert len(export["tables"]["taxpayers"]) == 1
+    response = client.post("/api/backup/import", json=export)
+    assert response.status_code == 201
+    new_id = response.get_json()["business_id"]
+    with app.app_context(), get_db() as conn:
+        row = conn.execute(
+            "SELECT t.employee_id FROM taxpayers t JOIN business_owners bo ON bo.taxpayer_id = t.id WHERE bo.business_id = ?",
+            (new_id,),
+        ).fetchone()
+        assert row["employee_id"] is None
+
+
+def test_import_rejects_rows_from_other_business(client, app):
+    business = client.post("/api/entities/businesses", json={"legal_name": "Mix Co"}).get_json()
+    with app.app_context(), get_db() as conn:
+        _seed_business(conn, business["id"])
+        conn.commit()
+    export = client.get(f"/api/backup/export/{business['id']}").get_json()
+    export["tables"]["accounts"][0]["business_id"] = 99999
+    response = client.post("/api/backup/import", json=export)
+    assert response.status_code == 400
+
+
 def test_import_rolls_back_entirely_on_bad_reference(client, app):
     business = client.post("/api/entities/businesses", json={"legal_name": "Rollback Co"}).get_json()
     with app.app_context(), get_db() as conn:

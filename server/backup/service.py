@@ -136,6 +136,11 @@ _FK_REMAPS: dict[str, dict[str, str]] = {
     "tax_returns": {"taxpayer_id": "taxpayers"},
 }
 
+# FKs that are detached (set to NULL) instead of aborting the import when
+# they point outside the exported business: a business owner may be linked
+# to an employee that belongs to a different business.
+_DETACHABLE_FKS: set[tuple[str, str]] = {("taxpayers", "employee_id")}
+
 
 def export_business(business_id: int) -> dict[str, Any]:
     """Export all data for a single business as a JSON-serializable dict."""
@@ -183,16 +188,21 @@ def _validate_backup(data: Any) -> tuple[dict[str, Any], dict[str, Any]]:
     if not isinstance(business, dict) or not isinstance(tables, dict):
         raise ValueError("Invalid backup format")
     version = data.get("format_version", 1)
-    if version not in SUPPORTED_VERSIONS:
+    if not isinstance(version, int) or isinstance(version, bool) or version not in SUPPORTED_VERSIONS:
         raise ValueError(f"Unsupported backup format version: {version}")
     if len(tables) > MAX_TABLES:
         raise ValueError("Backup has too many tables")
+    source_business_id = business.get("id")
+    scoped_tables = {table for table, scope in _TABLE_GRAPH if scope == "business"}
     total_rows = 0
     for name, rows in tables.items():
         if not isinstance(rows, list) or any(not isinstance(r, dict) for r in rows):
             raise ValueError(f"Invalid rows for table {name}")
         if len(rows) > MAX_ROWS_PER_TABLE:
             raise ValueError(f"Table {name} exceeds the row limit")
+        if name in scoped_tables and isinstance(source_business_id, int):
+            if any(r.get("business_id") != source_business_id for r in rows):
+                raise ValueError(f"Table {name} contains rows from another business")
         total_rows += len(rows)
     if total_rows > MAX_TOTAL_ROWS:
         raise ValueError("Backup exceeds the total row limit")
@@ -242,6 +252,9 @@ def import_business(data: dict[str, Any]) -> dict[str, Any]:
                         continue
                     new_value = id_maps.get(parent, {}).get(old_value)
                     if new_value is None:
+                        if (table, column) in _DETACHABLE_FKS:
+                            values[column] = None
+                            continue
                         raise ValueError(f"Unresolved reference: {table}.{column} -> {parent}({old_value})")
                     values[column] = new_value
                 cols = ", ".join(values)
