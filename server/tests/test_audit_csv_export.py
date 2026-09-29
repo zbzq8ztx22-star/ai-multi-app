@@ -36,7 +36,8 @@ def test_audit_log_csv_export_with_module_filter(client):
 
 
 def test_audit_log_csv_export_empty(client):
-    response = client.get("/api/audit/log/export")
+    # Auth events are audited now, so an empty export requires a quiet module.
+    response = client.get("/api/audit/log/export?module=accounting")
     assert response.status_code == 200
     lines = response.data.decode("utf-8").strip().split("\n")
     # Only header row when no entries
