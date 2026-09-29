@@ -51,17 +51,27 @@ def list_users() -> list[dict[str, Any]]:
         return [_row_to_dict(row) for row in rows]
 
 
-def update_user_role(user_id: int, role: str) -> dict[str, Any]:
+def update_user_role(user_id: int, role: str) -> tuple[dict[str, Any], str]:
+    """Update a user's role, returning the updated row and the previous role.
+
+    The previous role is read inside the same immediate transaction as the
+    update so callers auditing the change always see the transition that was
+    actually committed, not a separate raceable read.
+    """
     if role not in ROLES:
         raise ValueError("Invalid role")
     now = now_utc()
     with get_db() as conn:
+        conn.isolation_level = None
+        conn.execute("BEGIN IMMEDIATE")
         row = conn.execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone()
         if row is None:
             raise ValueError("User not found")
+        old_role = row["role"]
         conn.execute("UPDATE users SET role = ?, updated_at = ? WHERE id = ?", (role, now, user_id))
-        conn.commit()
-        return _row_to_dict(conn.execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone())
+        updated = _row_to_dict(conn.execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone())
+        conn.execute("COMMIT")
+        return updated, old_role
 
 
 def delete_user(user_id: int) -> None:
@@ -270,12 +280,10 @@ def change_role(user_id: int) -> Any:
     if not isinstance(data, dict):
         return jsonify({"error": "Request body must be JSON"}), 400
     role = str(data.get("role", "")).strip()
-    target = get_user_by_id(user_id)
     try:
-        updated = update_user_role(user_id, role)
+        updated, old_role = update_user_role(user_id, role)
     except ValueError as exc:
         return jsonify({"error": str(exc)}), 400
-    old_role = target["role"] if target else "unknown"
     _audit("update", current_user(), f"Changed role for '{updated['username']}' from '{old_role}' to '{role}'", entity_type="user", entity_id=user_id)
     return jsonify(updated)
 
@@ -283,12 +291,18 @@ def change_role(user_id: int) -> Any:
 @bp.route("/users/<int:user_id>", methods=["DELETE"])
 @admin_required
 def remove_user(user_id: int) -> Any:
+    # Capture the actor before the delete: if an admin removes their own
+    # account, current_user() resolves to None afterwards.
+    actor = current_user()
     target = get_user_by_id(user_id)
     try:
         delete_user(user_id)
     except ValueError as exc:
         return jsonify({"error": str(exc)}), 400
-    _audit("delete", current_user(), f"Deleted user '{target['username'] if target else user_id}'", entity_type="user", entity_id=user_id)
+    # Self-deletion must not leave a dangling user_id in audit_log: the row is
+    # already gone, so record the username but null the reference.
+    audit_user = {"id": None, "username": actor["username"]} if actor and actor["id"] == user_id else actor
+    _audit("delete", audit_user, f"Deleted user '{target['username'] if target else user_id}'", entity_type="user", entity_id=user_id)
     return jsonify({"deleted": True})
 
 

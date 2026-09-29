@@ -1,7 +1,13 @@
 from __future__ import annotations
 
 import json
+import secrets
 from typing import Any
+
+
+def random_password() -> str:
+    """Generate a random per-test credential (AGENTS.md: no fixed local passwords)."""
+    return secrets.token_urlsafe(16)
 
 
 class MockResponse:
