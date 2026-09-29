@@ -16,6 +16,13 @@ bp = Blueprint("auth", __name__, url_prefix="/api/auth")
 ROLES = {"admin", "viewer"}
 
 
+def _audit(action: str, user: dict[str, Any] | None, description: str = "", entity_type: str = "", entity_id: int | None = None) -> None:
+    # Deferred import: audit.routes imports this module, so a top-level
+    # import here would create a circular dependency.
+    from audit import service as audit_service
+    audit_service.log(action, "auth", user, entity_type=entity_type, entity_id=entity_id, description=description)
+
+
 def _row_to_dict(row: Any) -> dict[str, Any]:
     return dict(row)
 
@@ -171,6 +178,7 @@ def register() -> Any:
         return jsonify({"error": "Username already exists"}), 409
 
     user = create_user(username, password, role)
+    _audit("create", caller, f"Registered user '{username}' with role '{role}'", entity_type="user", entity_id=user["id"])
     return jsonify({"id": user["id"], "username": user["username"], "role": user["role"]}), 201
 
 
@@ -203,6 +211,7 @@ def login() -> Any:
         # processes/workers and not just within one in-memory map.
         if _login_rate_limited(conn, remote_addr, username, now):
             conn.commit()
+            _audit("login_rate_limited", None, f"Rate-limited login for '{username}' from {remote_addr or 'unknown'}")
             return jsonify({"error": "Too many login attempts; try again later"}), 429
 
         row = conn.execute("SELECT * FROM users WHERE username = ?", (username,)).fetchone()
@@ -212,6 +221,7 @@ def login() -> Any:
                 (remote_addr, username, now),
             )
             conn.commit()
+            _audit("login_failed", None, f"Failed login for '{username}' from {remote_addr or 'unknown'}")
             return jsonify({"error": "Invalid credentials"}), 401
         conn.execute(
             "DELETE FROM login_attempts WHERE remote_addr = ? AND username = ?",
@@ -219,6 +229,7 @@ def login() -> Any:
         )
         conn.commit()
         user = _row_to_dict(row)
+        _audit("login", user, f"Login from {remote_addr or 'unknown'}", entity_type="user", entity_id=user["id"])
 
     session["user_id"] = user["id"]
     session["username"] = user["username"]
@@ -229,7 +240,9 @@ def login() -> Any:
 @bp.route("/logout", methods=["POST"])
 @login_required
 def logout() -> Any:
+    user = current_user()
     session.clear()
+    _audit("logout", user, "Logged out", entity_type="user", entity_id=user["id"])
     return jsonify({"status": "ok"})
 
 
@@ -257,20 +270,26 @@ def change_role(user_id: int) -> Any:
     if not isinstance(data, dict):
         return jsonify({"error": "Request body must be JSON"}), 400
     role = str(data.get("role", "")).strip()
+    target = get_user_by_id(user_id)
     try:
-        return jsonify(update_user_role(user_id, role))
+        updated = update_user_role(user_id, role)
     except ValueError as exc:
         return jsonify({"error": str(exc)}), 400
+    old_role = target["role"] if target else "unknown"
+    _audit("update", current_user(), f"Changed role for '{updated['username']}' from '{old_role}' to '{role}'", entity_type="user", entity_id=user_id)
+    return jsonify(updated)
 
 
 @bp.route("/users/<int:user_id>", methods=["DELETE"])
 @admin_required
 def remove_user(user_id: int) -> Any:
+    target = get_user_by_id(user_id)
     try:
         delete_user(user_id)
-        return jsonify({"deleted": True})
     except ValueError as exc:
         return jsonify({"error": str(exc)}), 400
+    _audit("delete", current_user(), f"Deleted user '{target['username'] if target else user_id}'", entity_type="user", entity_id=user_id)
+    return jsonify({"deleted": True})
 
 
 def _ensure_default_admin(password: str | None) -> None:
@@ -278,7 +297,8 @@ def _ensure_default_admin(password: str | None) -> None:
         return
     if get_user_by_username("admin") is not None:
         return
-    create_user("admin", password, "admin")
+    created = create_user("admin", password, "admin")
+    _audit("create", None, "Bootstrapped default admin 'admin'", entity_type="user", entity_id=created["id"])
 
 
 def _env_flag(name: str, default: bool) -> bool:
@@ -302,5 +322,8 @@ def init_auth(app: Any) -> None:
     app.config["SESSION_COOKIE_SECURE"] = _env_flag("SESSION_COOKIE_SECURE", True)
     app.register_blueprint(bp)
 
+    # init_auth runs outside an app context; push one so the bootstrap lookup
+    # and its audit entry use the configured database, not the default path.
     default_password = os.environ.get("DEFAULT_ADMIN_PASSWORD")
-    _ensure_default_admin(default_password)
+    with app.app_context():
+        _ensure_default_admin(default_password)

@@ -10,6 +10,9 @@ os.environ["CORS_ORIGINS"] = "*"
 os.environ["SECRET_KEY"] = "test-secret-key"
 os.environ["SESSION_COOKIE_SECURE"] = "0"
 os.environ["ALLOW_REGISTRATION"] = "1"
+# A developer .env may define this; pin it empty (load_dotenv never overrides)
+# so test databases never get a bootstrapped admin user.
+os.environ["DEFAULT_ADMIN_PASSWORD"] = ""
 
 from app import create_app
 
